@@ -74,30 +74,37 @@ const ZS=(()=>{
       async close(){closed=true;try{if(reader)await reader.cancel();}catch(_){}try{writer.releaseLock();}catch(_){}try{await port.close();}catch(_){}}
     };
   }
-  const NAMES_KEY="lakgen:bleNames";
-  function knownNames(){try{const a=JSON.parse(localStorage.getItem(NAMES_KEY)||"[]");return Array.isArray(a)?a.filter(x=>typeof x==="string"&&x):[];}catch(_){return[];}}
-  function rememberName(n){if(!n)return;try{const a=[n,...knownNames().filter(x=>x!==n)].slice(0,5);localStorage.setItem(NAMES_KEY,JSON.stringify(a));}catch(_){}}
-  async function openBle(all){
+  async function openBle(all,log){
+    log=log||(()=>{});
     if(!("bluetooth" in navigator))throw Object.assign(new Error("このブラウザはBluetooth接続（Web Bluetooth）に対応していません。"),{code:"unsupported"});
-    // filtered: devices advertising the Studio service, plus keyboards connected before (by name)
-    const opts=all?{acceptAllDevices:true,optionalServices:[BLE_SERVICE]}
-      :{filters:[{services:[BLE_SERVICE]},...knownNames().map(name=>({name}))],optionalServices:[BLE_SERVICE]};
+    if(navigator.bluetooth.getAvailability){try{const ok=await navigator.bluetooth.getAvailability();log("Bluetoothアダプタ: "+(ok?"利用可能":"見つかりません"));}catch(_){}}
+    // same request as ZMK Studio / DYA Studio: devices that expose the Studio service
+    const opts=all?{acceptAllDevices:true,optionalServices:[BLE_SERVICE]}:{filters:[{services:[BLE_SERVICE]}]};
+    log("デバイス選択: "+(all?"すべてのデバイス":"Studioサービスで絞り込み"));
     const dev=await navigator.bluetooth.requestDevice(opts);
-    const gatt=await dev.gatt.connect();
+    log("選択: "+(dev.name||"(名前なし)"));
+    let gatt;
+    for(let i=0;i<3;i++){ // the first GATT connection sometimes fails right after pairing
+      try{log("GATT接続"+(i?"（再試行"+i+"）":"")+"…");gatt=await dev.gatt.connect();break;}
+      catch(e){log("GATT接続に失敗: "+(e&&e.message));if(i===2)throw e;await new Promise(r=>setTimeout(r,800));}
+    }
     let svc,ch;
-    try{svc=await gatt.getPrimaryService(BLE_SERVICE);ch=await svc.getCharacteristic(BLE_CHAR);}
-    catch(e){try{gatt.disconnect();}catch(_){}
+    try{log("Studioサービスを検索…");svc=await gatt.getPrimaryService(BLE_SERVICE);ch=await svc.getCharacteristic(BLE_CHAR);}
+    catch(e){log("サービス取得に失敗: "+(e&&e.message));try{gatt.disconnect();}catch(_){}
       throw Object.assign(new Error("「"+(dev.name||"選んだデバイス")+"」にZMK Studioの通信サービスが見つかりません。ファームウェアでStudioのBluetooth接続が有効か、スプリットの場合は左右どちら（central側）を選んだか確認してください。"),{code:"no_service"});}
+    const pr=ch.properties;log("特性: "+["read","write","writeWithoutResponse","notify","indicate"].filter(k=>pr[k]).join(", "));
     let onData=null,onClose=null;
     ch.addEventListener("characteristicvaluechanged",e=>{const v=e.target.value;if(onData)onData(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));});
-    dev.addEventListener("gattserverdisconnected",()=>{if(onClose)onClose();});
-    await ch.startNotifications();
-    rememberName(dev.name);
+    dev.addEventListener("gattserverdisconnected",()=>{log("切断されました");if(onClose)onClose();});
+    try{await ch.startNotifications();log("通知の受信を開始");}
+    catch(e){log("通知の開始に失敗: "+(e&&e.message));throw Object.assign(new Error("キーボードからの通知を受け取れませんでした（"+(e&&e.message)+"）。キーボードをアンロックしてから、もう一度接続してください。"),{code:"notify"});}
     return{
       kind:"ble",name:dev.name,
       set onData(f){onData=f;},set onClose(f){onClose=f;},
-      async write(b){for(let i=0;i<b.length;i+=180){const part=b.subarray(i,i+180);
-        if(ch.writeValueWithoutResponse&&ch.properties.writeWithoutResponse)await ch.writeValueWithoutResponse(part);else await ch.writeValue(part);}},
+      async write(b){ // write with response like ZMK Studio (reliable on encrypted links)
+        for(let i=0;i<b.length;i+=244){const part=b.subarray(i,i+244);
+          try{if(ch.writeValueWithResponse)await ch.writeValueWithResponse(part);else await ch.writeValue(part);}
+          catch(e){log("書き込みに失敗: "+(e&&e.message)+"（応答なしで再送）");if(pr.writeWithoutResponse&&ch.writeValueWithoutResponse)await ch.writeValueWithoutResponse(part);else throw e;}}},
       async close(){try{gatt.disconnect();}catch(_){}}
     };
   }
@@ -177,5 +184,5 @@ const ZS=(()=>{
       layouts.push({name:str(L,1),keys});}
     return{active:num(m,1),layouts};
   }
-  return{Client,openSerial,openBle,knownNames,encMsg,dec,frame,Deframer,parseKeymap,parseLayouts,_test:{pushVarint}};
+  return{Client,openSerial,openBle,encMsg,dec,frame,Deframer,parseKeymap,parseLayouts,_test:{pushVarint}};
 })();

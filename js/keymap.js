@@ -115,7 +115,8 @@ async function connect(kind){
   if(client){try{await client.close();}catch(_){}client=null;}
   kmStatus(kind==="usb"?"USBポートを選んでください…":"Bluetoothデバイスを選んでください…");
   try{
-    const tr=kind==="usb"?await ZS.openSerial():await ZS.openBle(kind==="ble-all");
+    kmLogClear();
+    const tr=kind==="usb"?await ZS.openSerial():await ZS.openBle(kind==="ble-all",kmLog);
     client=new ZS.Client(tr);
     client.onClose=()=>{client=null;kmStatus("キーボードとの接続が切れました。");renderKmButtons();};
     client.onNotify=()=>{if(waitingUnlock)readFromDevice();};
@@ -123,18 +124,24 @@ async function connect(kind){
     await readFromDevice();
   }catch(e){
     client=null;renderKmButtons();
-    if(e&&e.name==="NotFoundError"){kmStatus(kind==="ble"?"選択がキャンセルされました。キーボードが一覧に出なかった場合は「すべてのデバイスから選ぶ」を試してください（一度つながると、次からは一覧に出るようになります）。":"選択がキャンセルされました。");return;}
+    kmLog("エラー: "+(e&&e.name)+" "+(e&&e.message));
+    if(e&&e.name==="NotFoundError"){kmStatus(kind==="ble"?"選択がキャンセルされました。キーボードが一覧に出なかった場合は、キーボードをアンロックしてからもう一度押すか、「すべてのデバイスから選ぶ」を試してください。":"選択がキャンセルされました。");return;}
     if(e&&(e.name==="SecurityError"||/permissions policy|disallowed/i.test(String(e.message)))){
       kmStatus(BUILD==="claude"?"この表示ではUSB/Bluetooth接続が許可されていません。単体版で接続し、書き出したキーマップファイルを「ファイルから読込」で読み込んでください。":"このページではUSB/Bluetooth接続が許可されていません。httpsかローカルファイルとしてChrome/Edgeで開いてください。",true);return;}
     kmStatus((e&&e.message)||"接続できませんでした。",true);
   }
 }
 let waitingUnlock=false;
+const kmLogLines=[];
+function kmLog(m){const t=new Date();kmLogLines.push(String(t.getMinutes()).padStart(2,"0")+":"+String(t.getSeconds()).padStart(2,"0")+"."+String(t.getMilliseconds()).padStart(3,"0")+" "+m);
+  const el=document.getElementById("km-log");if(el){el.textContent=kmLogLines.slice(-60).join("\n");document.getElementById("km-logbox").hidden=false;}}
+function kmLogClear(){kmLogLines.length=0;const el=document.getElementById("km-log");if(el)el.textContent="";}
 async function readFromDevice(){
   if(!client)return;
   kmStatus("キーマップを読み込んでいます…");
   try{
-    const device=await client.deviceName();
+    kmLog("デバイス情報を要求");const device=await client.deviceName();kmLog("デバイス名: "+(device||"(取得できず)"));
+    kmLog("キーマップを要求");
     const layers=await client.keymap();
     waitingUnlock=false;
     const lay=await client.layouts();
@@ -144,6 +151,7 @@ async function readFromDevice(){
     setKeymap({device,layers,behaviors,keys:L.keys},client.tr.kind);
     kmStatus("読み込みました（"+layers.length+"レイヤー / "+L.keys.length+"キー）。");
   }catch(e){
+    kmLog("読み込みエラー: "+(e&&e.code)+" "+(e&&e.message));
     if(e&&e.code==="meta"){waitingUnlock=true;kmStatus("キーボードがロックされています。キーボードの &studio_unlock キー（DYA Studioのアンロック操作）を押すと自動で読み込みます。",true);renderKmButtons();return;}
     kmStatus((e&&e.message)||"読み込みに失敗しました。",true);
   }
@@ -504,6 +512,7 @@ function initKm(){
   document.getElementById("km-usb").onclick=()=>connect("usb");
   document.getElementById("km-ble").onclick=()=>connect("ble");
   document.getElementById("km-ble-all").onclick=()=>connect("ble-all");
+  document.getElementById("km-logcopy").onclick=async()=>{try{await navigator.clipboard.writeText(kmLogLines.join("\n"));kmStatus("接続ログをコピーしました。");}catch(_){kmStatus("コピーできませんでした。ログを選択してコピーしてください。");}};
   if(!("bluetooth" in navigator))document.getElementById("km-ble-all").hidden=true;
   document.getElementById("km-sample").onclick=loadSample;
   const fi=document.getElementById("km-file");document.getElementById("km-open").onclick=()=>fi.click();
