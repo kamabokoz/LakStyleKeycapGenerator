@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LAK風キーキャップジェネレータ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=M+PLUS+Rounded+1c:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<meta name="description" content="LAKスタイルのロープロファイルキーキャップ（Kailh Choc V2）をブラウザで設計し、STL/3MFで出力できるツール">
+<meta property="og:title" content="LAK風キーキャップジェネレータ">
+<meta property="og:description" content="LAKスタイルのキーキャップをブラウザで設計して3Dプリント">
+<meta property="og:image" content="https://YOUR_NAME.github.io/lak-keycap-generator/docs/preview.png">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<div class="share-dlg" id="share-dlg" hidden role="dialog" aria-modal="true" aria-labelledby="share-title">
+  <div class="share-box">
+    <div class="share-head"><h2 id="share-title">Xに投稿</h2><button type="button" id="share-close" aria-label="閉じる">×</button></div>
+    <img id="share-img" alt="投稿する画像のプレビュー">
+    <label class="share-lab" for="share-text">投稿文</label>
+    <textarea id="share-text" rows="4"></textarea>
+    <label class="share-lab" for="share-link">パラメータを開くリンク</label>
+    <div class="share-row"><input id="share-link" readonly><button type="button" id="share-copylink">コピー</button></div>
+    <p class="hint" id="share-nobase">このページをhttpsで公開しているURLを下で設定すると、パラメータ付きのリンクを投稿できます（未設定なら画像と文章だけ投稿します）。</p>
+    <details class="share-set"><summary>リンクの公開先URL</summary>
+      <input id="share-base" type="url" inputmode="url" placeholder="https://yourname.github.io/lak/">
+      <p class="hint">単体版HTMLを置いたページのURLです。リンクを開いた人は、そのページで同じパラメータを見られます。</p>
+    </details>
+    <div class="share-btns">
+      <button type="button" id="share-native" class="primary" hidden>Xアプリで共有（画像付き）</button>
+      <button type="button" id="share-copyimg" hidden>画像をコピー</button>
+      <button type="button" id="share-save">画像を保存</button>
+      <a id="share-intent" class="primary" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener">Xの投稿画面を開く</a>
+    </div>
+    <p class="km-status" id="share-st" aria-live="polite"></p>
+  </div>
+</div>
+<div class="pip" id="pip" hidden aria-label="調整中のプレビュー">
+  <div class="pip-bar"><span id="pip-cap"></span>
+    <button type="button" id="pip-pin" aria-pressed="false">固定</button>
+    <button type="button" id="pip-close" aria-label="プレビューを閉じる">×</button></div>
+  <div class="pip-slot" id="pip-slot"></div>
+</div>
+<div class="app">
+  <div class="view-col">
+    <header>
+      <h1>LAK風キーキャップジェネレータ</h1>
+      <p>Kailh Choc V2（MX互換十字軸）用の3Dプリント用キーキャップを作れます。キーボードに直接つないでLegendも作れます。</p>
+    </header>
+    <div class="stage" style="margin-top:14px"><div class="vw" id="vw"><canvas id="gl" aria-hidden="true"></canvas><canvas id="cv" aria-label="キーキャップの3Dプレビュー。ドラッグで回転"></canvas></div></div>
+    <div class="views" role="group" aria-label="表示">
+      <button data-view="iso" aria-pressed="true">斜め</button>
+      <button data-view="side" aria-pressed="false">横</button>
+      <button data-view="bottom" aria-pressed="false">底面</button>
+      <button data-view="row" aria-pressed="false">3キー並び</button>
+      <button data-view="section" aria-pressed="false">断面</button>
+    </div>
+    <dl class="stats">
+      <div><dt>中央の高さ</dt><dd id="s-center">–</dd></div>
+      <div><dt>天面の最薄部</dt><dd id="s-thin">–</dd></div>
+      <div><dt>底面サイズ</dt><dd id="s-base">–</dd></div>
+    </dl>
+    <button type="button" id="share-x" class="sharebtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.8 3h3.1l-6.8 7.8L22 21h-6.2l-4.9-6.4L5.3 21H2.2l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z"/></svg>このパラメータをXに投稿</button>
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+  </div>
+
+  <div class="side">
+    <section class="lib" id="lib" aria-labelledby="lib-title">
+      <div class="lib-head"><h2 id="lib-title">保存した設定</h2><span class="lib-where" id="lib-where"></span></div>
+      <div class="views lib-tabs" role="tablist">
+        <button role="tab" data-tab="presets" aria-selected="true" aria-pressed="true">プリセット</button>
+        <button role="tab" data-tab="history" aria-selected="false" aria-pressed="false">保存履歴</button>
+      </div>
+      <div id="tab-presets">
+        <form class="lib-new" id="preset-form" onsubmit="return false">
+          <input id="preset-name" maxlength="40" placeholder="名前（例：親指キー用 深め）" aria-label="プリセット名">
+          <button type="submit" id="preset-add">現在の設定を保存</button>
+        </form>
+        <ul class="lib-list" id="list-presets"></ul>
+      </div>
+      <div id="tab-history" hidden>
+        <p class="hint" style="padding:8px 0 0">STLを保存するたびに、そのときの設定が最新20件まで残ります。</p>
+        <ul class="lib-list" id="list-history"></ul>
+      </div>
+      <div class="lib-status" id="lib-status" aria-live="polite"></div>
+    </section>
+    <section class="lib km" aria-labelledby="km-title">
+      <div class="lib-head"><h2 id="km-title">キーマップとLegend</h2><span class="lib-where" id="km-dev"></span></div>
+      <div class="km-btns">
+        <button type="button" id="km-usb">USBで接続</button>
+        <button type="button" id="km-ble">Bluetoothで接続</button>
+        <button type="button" id="km-open">ファイルから読込</button>
+        <button type="button" id="km-sample" class="ghost">サンプルで試す</button>
+        <input type="file" id="km-file" accept=".json,application/json" hidden>
+      </div>
+      <button type="button" id="km-ble-all" class="linkbtn">Bluetoothの一覧に出ないときは：すべてのデバイスから選ぶ</button>
+      <p class="hint" style="padding:8px 0 0">DYA Studioは閉じるか切断してから接続してください。接続後、キーボードのアンロック操作が必要です。USBはPCのChrome/Edge、BluetoothはChrome/Edge（Android含む）で使えます。</p>
+      <div class="km-status" id="km-status" aria-live="polite"></div>
+      <div class="km-btns" style="margin-top:6px">
+        <button type="button" id="km-reload" class="ghost" hidden>もう一度読み込む</button>
+        <button type="button" id="km-disconnect" class="ghost" hidden>切断</button>
+      </div>
+      <div id="km-loaded" hidden>
+        <div class="km-mapwrap"><canvas id="km-map" aria-label="キー配列。タップしてキーを選択"></canvas></div>
+        <div class="km-btns">
+          <button type="button" id="km-multi" class="ghost" aria-pressed="false">複数選択</button>
+          <button type="button" id="km-all" class="ghost">全キー選択</button>
+          <button type="button" id="km-none" class="ghost">選択解除</button>
+        </div>
+        <div class="msg" id="km-warn" hidden style="margin-top:10px"></div>
+        <div id="km-editor" class="km-editor"></div>
+        <details class="km-sub">
+          <summary>Legendの文字設定</summary>
+          <div id="km-legend"></div>
+        </details>
+        <div class="km-export">
+          <div id="km-exfmt"></div>
+          <div class="km-btns">
+            <button type="button" id="km-exall" class="primary">全キーをLegend付きで保存</button>
+            <button type="button" id="km-exsel">選択中のキーだけ保存</button>
+            <button type="button" id="km-export" class="ghost">キーマップを書き出す</button>
+          </div>
+          <p class="km-status" id="km-exst" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+    <div class="params" id="params"></div>
+  </div>
+
+  <div class="export">
+    <button id="save">STLを保存</button>
+    <div class="status" id="status">STLと同じ形状のOpenSCADファイルを、ZIPにまとめて保存します。</div>
+  </div>
+</div>
+
+<script src="js/geom.js"></script>
+<script src="js/scad-body.js"></script>
+<script src="js/zmk.js"></script>
+<script src="js/labels.js"></script>
+<script src="js/legend.js"></script>
+<script src="js/app.js"></script>
+<script src="js/share.js"></script>
+<script src="js/keymap.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
