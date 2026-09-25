@@ -4,7 +4,7 @@ LAKスタイルのロープロファイルキーキャップを、ブラウザ�
 
 ZMK Studio対応のキーボードに直接つなぐと、キーマップを読み込んでLegend（刻印）付きのキーキャップを全キー分まとめて作れます。
 
-**▶ デモ：https://kamabokoz.github.io/lak-keycap-generator/**
+**▶ デモ：https://kamabokoz.github.io/LakStyleKeycapGenerator/**
 
 ![プレビュー](docs/preview.png)
 
