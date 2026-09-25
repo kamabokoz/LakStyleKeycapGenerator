@@ -74,13 +74,21 @@ const ZS=(()=>{
       async close(){closed=true;try{if(reader)await reader.cancel();}catch(_){}try{writer.releaseLock();}catch(_){}try{await port.close();}catch(_){}}
     };
   }
+  // Keyboards usually do not put the Studio service in their advertisement, so a service filter alone finds nothing.
+  // First time: list all devices; afterwards: only keyboards that connected successfully before (by name).
+  const NAMES_KEY="lakgen:bleNames";
+  function knownNames(){try{const a=JSON.parse(localStorage.getItem(NAMES_KEY)||"[]");return Array.isArray(a)?a.filter(x=>typeof x==="string"&&x):[];}catch(_){return[];}}
+  function rememberName(n){if(!n)return;try{localStorage.setItem(NAMES_KEY,JSON.stringify([n,...knownNames().filter(x=>x!==n)].slice(0,5)));}catch(_){}}
   async function openBle(all,log){
     log=log||(()=>{});
     if(!("bluetooth" in navigator))throw Object.assign(new Error("このブラウザはBluetooth接続（Web Bluetooth）に対応していません。"),{code:"unsupported"});
     if(navigator.bluetooth.getAvailability){try{const ok=await navigator.bluetooth.getAvailability();log("Bluetoothアダプタ: "+(ok?"利用可能":"見つかりません"));}catch(_){}}
     // same request as ZMK Studio / DYA Studio: devices that expose the Studio service
-    const opts=all?{acceptAllDevices:true,optionalServices:[BLE_SERVICE]}:{filters:[{services:[BLE_SERVICE]}]};
-    log("デバイス選択: "+(all?"すべてのデバイス":"Studioサービスで絞り込み"));
+    // ZMK keyboards advertise the Battery service (with HID, which Web Bluetooth does not allow as a filter)
+    const names=all?[]:knownNames();
+    const opts=all?{acceptAllDevices:true,optionalServices:[BLE_SERVICE]}
+      :{filters:[{services:[BLE_SERVICE]},{services:["battery_service"]},...names.map(name=>({name}))],optionalServices:[BLE_SERVICE]};
+    log("デバイス選択: "+(all?"すべてのデバイス":"Studioサービス／バッテリーサービスを持つ機器"+(names.length?"＋前回のキーボード（"+names.join(", ")+"）":"")));
     const dev=await navigator.bluetooth.requestDevice(opts);
     log("選択: "+(dev.name||"(名前なし)"));
     let gatt;
@@ -96,15 +104,18 @@ const ZS=(()=>{
     let onData=null,onClose=null;
     ch.addEventListener("characteristicvaluechanged",e=>{const v=e.target.value;if(onData)onData(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));});
     dev.addEventListener("gattserverdisconnected",()=>{log("切断されました");if(onClose)onClose();});
-    try{await ch.startNotifications();log("通知の受信を開始");}
+    try{await ch.startNotifications();log("通知の受信を開始");rememberName(dev.name);}
     catch(e){log("通知の開始に失敗: "+(e&&e.message));throw Object.assign(new Error("キーボードからの通知を受け取れませんでした（"+(e&&e.message)+"）。キーボードをアンロックしてから、もう一度接続してください。"),{code:"notify"});}
     return{
       kind:"ble",name:dev.name,
       set onData(f){onData=f;},set onClose(f){onClose=f;},
-      async write(b){ // write with response like ZMK Studio (reliable on encrypted links)
-        for(let i=0;i<b.length;i+=244){const part=b.subarray(i,i+244);
-          try{if(ch.writeValueWithResponse)await ch.writeValueWithResponse(part);else await ch.writeValue(part);}
-          catch(e){log("書き込みに失敗: "+(e&&e.message)+"（応答なしで再送）");if(pr.writeWithoutResponse&&ch.writeValueWithoutResponse)await ch.writeValueWithoutResponse(part);else throw e;}}},
+      async write(b){ // prefer write-without-response when offered (this is what worked on real keyboards)
+        const noResp=pr.writeWithoutResponse&&ch.writeValueWithoutResponse;
+        for(let i=0;i<b.length;i+=180){const part=b.subarray(i,i+180);
+          try{if(noResp)await ch.writeValueWithoutResponse(part);else if(ch.writeValueWithResponse)await ch.writeValueWithResponse(part);else await ch.writeValue(part);}
+          catch(e){log("書き込みに失敗: "+(e&&e.message));
+            if(!noResp&&pr.writeWithoutResponse&&ch.writeValueWithoutResponse)await ch.writeValueWithoutResponse(part);
+            else if(noResp&&pr.write)await ch.writeValue(part);else throw e;}}},
       async close(){try{gatt.disconnect();}catch(_){}}
     };
   }
@@ -114,7 +125,8 @@ const ZS=(()=>{
     constructor(tr){
       this.tr=tr;this.nextId=1;this.pending=new Map();this.onNotify=null;this.onClose=null;
       this.def=new Deframer(b=>this._msg(b));
-      tr.onData=d=>this.def.push(d);
+      this.rxBytes=0;this.lastRx=0;this.onProgress=null;
+      tr.onData=d=>{this.rxBytes+=d.length;this.lastRx=Date.now();if(this.onProgress)this.onProgress(this.rxBytes);this.def.push(d);};
       tr.onClose=()=>{for(const [,p] of this.pending)p.reject(Object.assign(new Error("接続が切れました"),{code:"closed"}));this.pending.clear();if(this.onClose)this.onClose();};
     }
     _msg(b){
@@ -126,13 +138,19 @@ const ZS=(()=>{
         p.resolve({sub:0,msg:new Map()});
       }else if(nt&&this.onNotify){this.onNotify(dec(nt));}
     }
-    call(sub,inner,timeout=6000){
-      const id=this.nextId++;
+    call(sub,inner,idle=8000,max=120000){
+      const id=this.nextId++,start=Date.now();
       const payload=encMsg([[1,'v',id],[sub,'m',inner]]);
       return new Promise((resolve,reject)=>{
-        const t=setTimeout(()=>{this.pending.delete(id);reject(Object.assign(new Error("キーボードから応答がありません"),{code:"timeout"}));},timeout);
-        this.pending.set(id,{resolve,reject,t});
-        this.tr.write(frame(payload)).catch(e=>{clearTimeout(t);this.pending.delete(id);reject(e);});
+        const p={resolve,reject,t:0};
+        const tick=()=>{ // fail only when nothing has arrived for `idle` ms (or after `max` ms in total)
+          const quiet=Date.now()-Math.max(start,this.lastRx);
+          if(quiet>=idle||Date.now()-start>=max){this.pending.delete(id);reject(Object.assign(new Error("キーボードから応答がありません"),{code:"timeout"}));}
+          else p.t=setTimeout(tick,Math.min(1000,idle-quiet+10));
+        };
+        p.t=setTimeout(tick,idle);
+        this.pending.set(id,p);
+        this.tr.write(frame(payload)).catch(e=>{clearTimeout(p.t);this.pending.delete(id);reject(e);});
       });
     }
     async deviceName(){try{const r=await this.call(3,encMsg([[1,'b',true]]));const info=bytes(r.msg,1);return info?str(dec(info),1):"";}catch(_){return"";}}
@@ -184,5 +202,5 @@ const ZS=(()=>{
       layouts.push({name:str(L,1),keys});}
     return{active:num(m,1),layouts};
   }
-  return{Client,openSerial,openBle,encMsg,dec,frame,Deframer,parseKeymap,parseLayouts,_test:{pushVarint}};
+  return{Client,openSerial,openBle,knownNames,encMsg,dec,frame,Deframer,parseKeymap,parseLayouts,_test:{pushVarint}};
 })();

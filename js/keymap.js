@@ -113,19 +113,19 @@ function setKeymap(d,src){
 }
 async function connect(kind){
   if(client){try{await client.close();}catch(_){}client=null;}
-  kmStatus(kind==="usb"?"USBポートを選んでください…":"Bluetoothデバイスを選んでください…");
+  kmStatus(kind==="usb"?"USBポートを選んでください…":kind==="ble"?"キーボードを選んでください…":"周辺のBluetooth機器がすべて表示されます。キーボードの名前を選んでください。");
   try{
     kmLogClear();
     const tr=kind==="usb"?await ZS.openSerial():await ZS.openBle(kind==="ble-all",kmLog);
     client=new ZS.Client(tr);
-    client.onClose=()=>{client=null;kmStatus("キーボードとの接続が切れました。");renderKmButtons();};
-    client.onNotify=()=>{if(waitingUnlock)readFromDevice();};
+    client.onClose=()=>{client=null;clearInterval(unlockTimer);waitingUnlock=false;kmStatus("キーボードとの接続が切れました。");renderKmButtons();};
+    client.onNotify=()=>{kmLog("キーボードから通知を受信"+(waitingUnlock?"（読み込みを再開）":""));if(waitingUnlock)readFromDevice();};
     renderKmButtons();
     await readFromDevice();
   }catch(e){
     client=null;renderKmButtons();
     kmLog("エラー: "+(e&&e.name)+" "+(e&&e.message));
-    if(e&&e.name==="NotFoundError"){kmStatus(kind==="ble"?"選択がキャンセルされました。キーボードが一覧に出なかった場合は、キーボードをアンロックしてからもう一度押すか、「すべてのデバイスから選ぶ」を試してください。":"選択がキャンセルされました。");return;}
+    if(e&&e.name==="NotFoundError"){kmStatus(kind==="ble"?"選択がキャンセルされました。キーボードが一覧に出なかった場合は「すべてのデバイスから選ぶ」を試してください。":"選択がキャンセルされました。");return;}
     if(e&&(e.name==="SecurityError"||/permissions policy|disallowed/i.test(String(e.message)))){
       kmStatus(BUILD==="claude"?"この表示ではUSB/Bluetooth接続が許可されていません。単体版で接続し、書き出したキーマップファイルを「ファイルから読込」で読み込んでください。":"このページではUSB/Bluetooth接続が許可されていません。httpsかローカルファイルとしてChrome/Edgeで開いてください。",true);return;}
     kmStatus((e&&e.message)||"接続できませんでした。",true);
@@ -136,25 +136,41 @@ const kmLogLines=[];
 function kmLog(m){const t=new Date();kmLogLines.push(String(t.getMinutes()).padStart(2,"0")+":"+String(t.getSeconds()).padStart(2,"0")+"."+String(t.getMilliseconds()).padStart(3,"0")+" "+m);
   const el=document.getElementById("km-log");if(el){el.textContent=kmLogLines.slice(-60).join("\n");document.getElementById("km-logbox").hidden=false;}}
 function kmLogClear(){kmLogLines.length=0;const el=document.getElementById("km-log");if(el)el.textContent="";}
+let reading=false,unlockTimer=0;
 async function readFromDevice(){
-  if(!client)return;
+  if(!client||reading)return;
+  reading=true;
+  const c=client;
+  c.onProgress=n=>{if(!waitingUnlock)kmStatus("キーボードから受信中… "+(n/1024).toFixed(1)+" KB");};
   kmStatus("キーマップを読み込んでいます…");
   try{
-    kmLog("デバイス情報を要求");const device=await client.deviceName();kmLog("デバイス名: "+(device||"(取得できず)"));
+    kmLog("デバイス情報を要求");const device=await c.deviceName();kmLog("デバイス名: "+(device||"(取得できず)"));
     kmLog("キーマップを要求");
-    const layers=await client.keymap();
-    waitingUnlock=false;
-    const lay=await client.layouts();
+    const layers=await withRetry(()=>c.keymap(),"キーマップ");
+    waitingUnlock=false;clearInterval(unlockTimer);
+    kmLog("キーマップ受信: "+layers.length+"レイヤー");
+    kmLog("物理配列を要求");
+    const lay=await withRetry(()=>c.layouts(),"物理配列");
     const L=lay.layouts[lay.active]||lay.layouts[0]||{keys:[]};
-    kmStatus("ビヘイビア情報を読み込んでいます…");
-    const behaviors=await client.behaviors();
-    setKeymap({device,layers,behaviors,keys:L.keys},client.tr.kind);
+    kmLog("物理配列受信: "+L.keys.length+"キー");
+    kmStatus("ビヘイビア情報を読み込んでいます…");kmLog("ビヘイビア情報を要求");
+    const behaviors=await c.behaviors();
+    kmLog("ビヘイビア受信: "+Object.keys(behaviors).length+"種類（受信合計 "+(c.rxBytes/1024).toFixed(1)+" KB）");
+    setKeymap({device,layers,behaviors,keys:L.keys},c.tr.kind);
     kmStatus("読み込みました（"+layers.length+"レイヤー / "+L.keys.length+"キー）。");
   }catch(e){
     kmLog("読み込みエラー: "+(e&&e.code)+" "+(e&&e.message));
-    if(e&&e.code==="meta"){waitingUnlock=true;kmStatus("キーボードがロックされています。キーボードの &studio_unlock キー（DYA Studioのアンロック操作）を押すと自動で読み込みます。",true);renderKmButtons();return;}
-    kmStatus((e&&e.message)||"読み込みに失敗しました。",true);
-  }
+    if(e&&e.code==="meta"){
+      if(!waitingUnlock){waitingUnlock=true;
+        // do not rely only on the unlock notification: ask again every few seconds
+        clearInterval(unlockTimer);unlockTimer=setInterval(()=>{if(!client){clearInterval(unlockTimer);return;}if(waitingUnlock)readFromDevice();},3000);}
+      kmStatus("キーボードがロックされています。キーボードの &studio_unlock キー（DYA Studioのアンロック操作）を押すと自動で読み込みます。",true);renderKmButtons();
+    }else kmStatus((e&&e.message)||"読み込みに失敗しました。",true);
+  }finally{reading=false;c.onProgress=null;}
+}
+async function withRetry(fn,label){
+  try{return await fn();}
+  catch(e){if(e&&e.code==="timeout"){kmLog(label+"の応答がないため再要求");return await fn();}throw e;}
 }
 function exportKeymapJson(){
   const data={format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG};
