@@ -16,7 +16,10 @@ for (const step_run of [0, 1.5]) for (const [step_rf, step_rs] of [[0, 0], [0.5,
   cases.push([`傾斜${step_run} 裾R${step_rf} 肩R${step_rs}`, { step_run, step_rf, step_rs }]);
 cases.push(["従来形（テーパー側面）", { top_size: 14.2, edge_h: 4.2, r_base: 1.2, r_top: 2, dome: 0.4, dome_type: 0, dome_scope: 0,
   edge_drop: 0.5, edge_band: 2, step_run: 0, step_rs: 0, step_rf: 0, r_plateau: 0.3, cavity_h: 3.2 }]);
-cases.push(["ホーミング突起", { homing: true }]);
+cases.push(["ホーミング突起（旧データ）", { homing: true }]);
+for (const [name, o] of [["バー", {}], ["ドット", { homing_type: 1, homing_w: 1.2 }], ["長いバー", { homing_len: 9, homing_h: 0.8 }],
+  ["位置ずらし", { homing_x: 1.5, homing_y: 3 }], ["球面の天面", { dome: 0.5, dome_type: 0, dome_scope: 0 }], ["段差なし", { boundary: 2 }]])
+  cases.push([`ホーミング ${name}`, { homing: true, homing_type: 0, homing_len: 5, homing_w: 0.9, homing_h: 0.3, homing_x: 0, homing_y: -4, ...o }]);
 
 const key = p => p.map(v => (Math.abs(v) < 5e-6 ? 0 : v).toFixed(5)).join(",");
 let failed = 0;

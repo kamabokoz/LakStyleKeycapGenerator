@@ -6,13 +6,37 @@ const KM={device:"",layers:[],behaviors:{},keys:[],source:""};
 const LDEF={host:"jis",font:"IBM Plex Sans JP",weight:700,mainSize:4.0,subSize:2.3,style:"engrave",depth:0.6,height:0.4,embed:0.3};
 let LCFG={...LDEF};
 let KEYCFG={}; // pos -> [{layer, at, text?}]
+var KEYHOME={}; // pos -> true : keys that get the homing bump in keymap output
+// shape parameters for one key: with a keymap loaded, the homing bump is chosen per key
+function paramsFor(pos){return KM.layers.length&&pos!==null&&pos!==undefined?{...P,homing:P.homing&&!!KEYHOME[pos]}:P;}
+// the master switch in the parameters panel is ON: make sure some keys carry the bump and the preview shows one of them
+function homingEdited(k){
+  if(!KM.layers.length)return;
+  const sw=k==="homing";   // the master switch itself: markers and the key editor change
+  if(!P.homing){if(sw){drawMap();renderEditor();}return;}
+  let msg="";
+  if(!Object.keys(KEYHOME).length){
+    const fj=fjKeys(),pick=fj.length?fj:(curKey!==null?[curKey]:[]);
+    pick.forEach(i=>KEYHOME[i]=true);
+    if(pick.length)msg=(fj.length?"F・Jキーに":"表示中のキーに")+"ホーミング突起を付けました（付けるキーはキーの設定欄で変えられます）。";
+  }
+  if(curKey===null||!KEYHOME[curKey]){
+    const t=Object.keys(KEYHOME).map(Number).sort((x,y)=>x-y)[0];
+    if(t!==undefined){sel.clear();sel.add(t);curKey=t;
+      const lab=autoLabel(0,t);msg+="ホーミング突起の付いたキー"+(lab?"（"+lab+"）":"（"+(t+1)+"番）")+"を表示しています。";}
+  }
+  if(msg)kmStatus(msg);
+  if(msg||sw){drawMap();renderEditor();saveWs();}   // only when something changed (sliders call this on every tick)
+}
+function setHomingMaster(on){P.homing=on;const i=inputs.homing;if(i&&i.check)i.check.checked=on;}
 const EDEF={format:"stl",bodyExt:1,legendExt:2,plate:256};
 let EXP={...EDEF};
 const sel=new Set();let multiSel=false,curKey=null,client=null;
 const AT=[["c","中央"],["tl","左上"],["tr","右上"],["bl","左下"],["br","右下"],["t","上"],["b","下"]];
 function slotsOf(pos){return KEYCFG[pos]||[{layer:0,at:"c"}];}
 function bindingAt(li,pos){const L=KM.layers[li];return L&&L.bindings[pos];}
-function autoLabel(li,pos){const b=bindingAt(li,pos);return b?LBL.label(b,KM.behaviors,KM.layers,LCFG.host):"";}
+function autoLabel(li,pos){const b=bindingAt(li,pos);if(!b)return "";
+  return VIAL.isVialBinding(b)?VIAL.label(b,KM.behaviors._qmk,KM.layers,LCFG.host):LBL.label(b,KM.behaviors,KM.layers,LCFG.host);}
 function slotText(s,pos){return (s.text!==undefined&&s.text!==null&&s.text!=="")?s.text:autoLabel(s.layer,pos);}
 function kmStatus(t,err){const e=document.getElementById("km-status");e.textContent=t||"";e.className="km-status"+(err?" err":"");}
 
@@ -92,15 +116,25 @@ async function legendShapes(pos){
 function shiftT(T,offx){return offx?T.map(t=>[[t[0][0]+offx,t[0][1],t[0][2]],[t[1][0]+offx,t[1][1],t[1][2]],[t[2][0]+offx,t[2][1],t[2][2]],t[3]]):T;}
 // body (with pockets when engraved) and the legend part (inlay filling the pocket, or raised letters)
 async function legendParts(pos,offx,N,M){
-  const {shapes,dropped}=await legendShapes(pos);
-  if(!shapes.length)return{body:buildMesh(P,N,M,offx),legend:[],dropped};
+  const {shapes,dropped}=await legendShapes(pos),Q=paramsFor(pos);
+  if(!shapes.length)return{body:buildMesh(Q,N,M,offx),legend:[],dropped};
   if(LCFG.style==="engrave"){
-    const body=buildMesh(P,N,M,offx,{shapes,depth:LCFG.depth});
+    const body=buildMesh(Q,N,M,offx,{shapes,depth:LCFG.depth});
     const legend=shiftT(LEG.extrude(shapes,(x,y)=>zTop(x,y)-LCFG.depth,(x,y)=>zTop(x,y),3),offx);
     return{body,legend,dropped};
   }
   const legend=shiftT(LEG.extrude(shapes,(x,y)=>zTop(x,y)-LCFG.embed,(x,y)=>zTop(x,y)+LCFG.height,3),offx);
-  return{body:buildMesh(P,N,M,offx),legend,dropped};
+  return{body:buildMesh(Q,N,M,offx),legend,dropped};
+}
+// does the homing bump touch any legend of this key?
+function homingHitsLegend(shapes){
+  if(!shapes.length)return false;
+  const S=homingSpec(P),L=Math.max(0,S.len-S.w),m=S.r+0.3;
+  const dSeg=(x,y)=>{const t=Math.max(-L/2,Math.min(L/2,x-S.x));return Math.hypot(x-S.x-t,y-S.y);};
+  for(const l of loopsOf(shapes))for(let i=0;i<l.length;i++){const a=l[i],b=l[(i+1)%l.length];
+    for(let s=0;s<=4;s++){const x=a[0]+(b[0]-a[0])*s/4,y=a[1]+(b[1]-a[1])*s/4;if(dSeg(x,y)<m)return true;}}
+  // bump entirely inside a glyph
+  return shapes.some(s=>pipL([S.x,S.y],s.outer)&&!s.holes.some(h=>pipL([S.x,S.y],h)));
 }
 function minPocketFloor(shapes){let m=Infinity;for(const l of loopsOf(shapes))for(const p of l)m=Math.min(m,zTop(p[0],p[1])-LCFG.depth-P.cavity_h);return m;}
 
@@ -109,6 +143,8 @@ function setKeymap(d,src){
   KM.device=d.device||"";KM.layers=d.layers||[];KM.behaviors=d.behaviors||{};KM.keys=d.keys||[];KM.source=src;
   sel.clear();curKey=KM.keys.length?0:null;if(curKey!==null)sel.add(0);
   for(const k in KEYCFG){if(+k>=KM.keys.length)delete KEYCFG[k];}
+  for(const k in KEYHOME){if(+k>=KM.keys.length)delete KEYHOME[k];}
+  if(P.homing&&!Object.keys(KEYHOME).length)fjKeys().forEach(i=>KEYHOME[i]=true);   // bump already switched on: start with F and J
   shapeCache.clear();renderKm();saveWs();update();
 }
 async function connect(kind){
@@ -131,6 +167,42 @@ async function connect(kind){
     kmStatus((e&&e.message)||"接続できませんでした。",true);
   }
 }
+// --- Vial (QMK) keyboards over WebHID ---
+let VIALDEF=null,LASTVIL=null; // keyboard definition file / last .vil, kept for this session
+async function connectVial(){
+  if(client){try{await client.close();}catch(_){}client=null;}
+  kmLogClear();kmStatus("キーボードを選んでください…");
+  try{
+    const v=await VIAL.open(kmLog,()=>{client=null;kmStatus("キーボードとの接続が切れました。");renderKmButtons();});
+    client={vial:v,tr:{kind:"vial"},close:()=>v.close()};renderKmButtons();
+    await readVial();
+  }catch(e){
+    client=null;renderKmButtons();kmLog("エラー: "+(e&&e.name)+" "+(e&&e.message));
+    if(e&&e.name==="NotFoundError"){kmStatus("選択がキャンセルされました。一覧にキーボードが出ないときは、Vialアプリを閉じてからもう一度試してください。");return;}
+    if(e&&(e.name==="SecurityError"||/permissions policy|disallowed/i.test(String(e.message)))){
+      kmStatus(BUILD==="claude"?"この表示ではVialの接続が許可されていません。単体版で接続するか、Vialで保存した.vilファイルを「ファイルから読込」で読み込んでください。":"このページではVialの接続が許可されていません。httpsかローカルファイルとしてChrome/Edgeで開いてください。",true);return;}
+    if(e&&e.name==="NotAllowedError"){kmStatus("キーボードを開けませんでした。Vialアプリなど、キーボードに接続している他のアプリを閉じてからもう一度試してください。",true);return;}
+    kmStatus((e&&e.message)||"接続できませんでした。",true);
+  }
+}
+async function readVial(){
+  if(!client||!client.vial||reading)return;
+  reading=true;const c=client;
+  kmStatus("Vialキーボードから読み込んでいます…");
+  try{
+    const d=await c.vial.read(VIALDEF,(what,n,t)=>kmStatus(what+"を読み込んでいます… "+Math.min(100,Math.round(n/t*100))+"%"));
+    setKeymap(d,"vial");
+    kmStatus("読み込みました（"+d.layers.length+"レイヤー / "+d.keys.length+"キー）。"+(d.vial?"":"VIAのキーボードとして、読み込んだ定義ファイルの配列を使いました。"));
+  }catch(e){kmLog("読み込みエラー: "+(e&&e.code)+" "+(e&&e.message));kmStatus((e&&e.message)||"読み込みに失敗しました。",true);}
+  finally{reading=false;}
+}
+function loadVil(vil,name){
+  const d=VIAL.fromVil(vil,VIALDEF,name);
+  KEYCFG={};KEYHOME={};   // a different keyboard / layout: per-key settings do not carry over
+  setKeymap(d,"vil");
+  kmStatus("Vialのファイルを読み込みました（"+d.layers.length+"レイヤー / "+d.keys.length+"キー）。"+
+    (d.grid?"キーの配列情報がないため、マトリクスの並び（行×列）で表示しています。キーボード定義（vial.json）も読み込むと実際の配列になります。":""));
+}
 let waitingUnlock=false;
 const kmLogLines=[];
 function kmLog(m){const t=new Date();kmLogLines.push(String(t.getMinutes()).padStart(2,"0")+":"+String(t.getSeconds()).padStart(2,"0")+"."+String(t.getMilliseconds()).padStart(3,"0")+" "+m);
@@ -138,6 +210,7 @@ function kmLog(m){const t=new Date();kmLogLines.push(String(t.getMinutes()).padS
 function kmLogClear(){kmLogLines.length=0;const el=document.getElementById("km-log");if(el)el.textContent="";}
 let reading=false,unlockTimer=0;
 async function readFromDevice(){
+  if(client&&client.vial)return readVial();
   if(!client||reading)return;
   reading=true;
   const c=client;
@@ -173,19 +246,31 @@ async function withRetry(fn,label){
   catch(e){if(e&&e.code==="timeout"){kmLog(label+"の応答がないため再要求");return await fn();}throw e;}
 }
 function exportKeymapJson(){
-  const data={format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG};
+  const data={format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number)};
   const name="keymap_"+(KM.device||"keyboard").replace(/[^A-Za-z0-9_-]+/g,"_")+".json";
   saveFile(new Blob([JSON.stringify(data)],{type:"application/json"}),name,"km-status");
 }
-function importKeymapFile(file){
-  const r=new FileReader();
-  r.onload=()=>{try{const d=JSON.parse(r.result);
-      if(d.format!=="lak-keymap/1"||!Array.isArray(d.layers)||!Array.isArray(d.keys))throw new Error("形式が違います");
-      if(d.legendConfig)LCFG={...LDEF,...d.legendConfig};
-      KEYCFG=d.keyConfig&&typeof d.keyConfig==="object"?d.keyConfig:{};
-      setKeymap(d,"file");buildLegendForm();kmStatus("ファイルから読み込みました（"+d.layers.length+"レイヤー / "+d.keys.length+"キー）。");}
-    catch(e){kmStatus("このファイルは読み込めません（"+e.message+"）。このアプリで書き出したキーマップファイルを選んでください。",true);}};
-  r.readAsText(file);
+function applyLakKeymap(d){
+  if(!Array.isArray(d.layers)||!Array.isArray(d.keys))throw new Error("形式が違います");
+  if(d.legendConfig)LCFG={...LDEF,...d.legendConfig};
+  KEYCFG=d.keyConfig&&typeof d.keyConfig==="object"?d.keyConfig:{};
+  KEYHOME={};if(Array.isArray(d.homingKeys))d.homingKeys.forEach(i=>{if(Number.isInteger(i)&&i>=0)KEYHOME[i]=true;});
+  setKeymap(d,"file");buildLegendForm();kmStatus("ファイルから読み込みました（"+d.layers.length+"レイヤー / "+d.keys.length+"キー）。");
+}
+// keymap files: this app's keymap.json, Vial .vil, and keyboard definitions (vial.json / VIA JSON)
+async function importKeymapFiles(files){
+  const got=[];
+  for(const f of files){try{got.push({f,d:JSON.parse(await f.text())});}catch(e){kmStatus("「"+f.name+"」はJSONとして読み込めませんでした。",true);return;}}
+  try{
+    const lak=got.find(x=>x.d&&x.d.format==="lak-keymap/1"),vil=got.find(x=>VIAL.isVil(x.d)),def=got.find(x=>VIAL.isDef(x.d));
+    if(def)VIALDEF=def.d;
+    if(lak){applyLakKeymap(lak.d);return;}
+    if(vil){LASTVIL={vil:vil.d,name:vil.f.name.replace(/\.[^.]+$/,"")};loadVil(LASTVIL.vil,LASTVIL.name);return;}
+    if(def){
+      if(LASTVIL){loadVil(LASTVIL.vil,LASTVIL.name);kmStatus("キーボード定義を使って、Vialのファイルを実際の配列で表示し直しました（"+KM.keys.length+"キー）。");return;}
+      kmStatus("キーボード定義（"+def.f.name+"）を読み込みました。続けて.vilファイルを読み込むか、VIAのキーボードなら「Vial（USB）」で接続してください。");return;}
+    throw new Error("対応していない形式です");
+  }catch(e){kmStatus("このファイルは読み込めません（"+e.message+"）。このアプリで書き出したキーマップ、Vialの.vil、キーボード定義（vial.json）を選んでください。",true);}
 }
 function loadSample(){
   const keys=[],st=[30,30,10,0,10,20];
@@ -214,7 +299,7 @@ const kmCv=()=>document.getElementById("km-map");
 let mapGeom=null;
 function keyPoly(k){
   const u=1/100,x=k.x*u,y=k.y*u,w=k.w*u,h=k.h*u,r=(k.r||0)/100*Math.PI/180;
-  let rx=k.rx*u,ry=k.ry*u;if(!k.rx&&!k.ry){rx=x+w/2;ry=y+h/2;}
+  let rx=k.rx*u,ry=k.ry*u;if(!k.ro&&!k.rx&&!k.ry){rx=x+w/2;ry=y+h/2;} // ro: KLE keys rotate about (rx,ry) even at 0,0
   const pts=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
   const c=Math.cos(r),s=Math.sin(r);
   return pts.map(([px,py])=>{const dx=px-rx,dy=py-ry;return[rx+dx*c-dy*s,ry+dx*s+dy*c];});
@@ -243,6 +328,8 @@ function drawMap(){
       const off={c:[0,0],t:[0,-.3],b:[0,.3],tl:[-.22,-.3],tr:[.22,-.3],bl:[-.22,.3],br:[.22,.3]}[s.at]||[0,0];
       let tx=t;while(ctx2.measureText(tx).width>0.86*sc&&tx.length>1)tx=tx.slice(0,-1);
       const mm=sc/Math.max(P.pitch,1);ctx2.fillText(tx,off[0]*sc+(+s.dx||0)*mm,off[1]*sc-(+s.dy||0)*mm);}
+    if(P.homing&&KEYHOME[i]){ctx2.strokeStyle=on?css("--accent-ink"):ink;ctx2.lineWidth=Math.max(1.5,sc*0.04);ctx2.lineCap="round";
+      ctx2.beginPath();ctx2.moveTo(-0.14*sc,0.36*sc);ctx2.lineTo(0.14*sc,0.36*sc);ctx2.stroke();}
     ctx2.restore();
   });
 }
@@ -291,6 +378,27 @@ function renderEditor(){
   hint.textContent=ids.length===1?"文字欄を空にすると、キーマップから自動で決まる文字になります。":"複数キーの文字の上書きは、1キーずつ選んで行ってください。";
   box.appendChild(hint);
   renderFine(box,ids);
+  renderHomingKeys(box,ids);
+}
+function fjKeys(){const out=[];KM.keys.forEach((_,i)=>{const t=autoLabel(0,i);if(t==="F"||t==="J")out.push(i);});return out;}
+function renderHomingKeys(box,ids){
+  const wrap=document.createElement("div");wrap.className="km-fine";
+  const head=document.createElement("div");head.className="km-edhead";head.textContent="ホーミング突起";wrap.appendChild(head);
+  const on=P.homing?ids.filter(p=>KEYHOME[p]).length:0;   // master off: nothing will get a bump
+  const lab=document.createElement("label");lab.className="km-lname";lab.style.padding="4px 0";
+  const cb=document.createElement("input");cb.type="checkbox";cb.checked=ids.length>0&&on===ids.length;cb.indeterminate=on>0&&on<ids.length;
+  cb.onchange=()=>{ids.forEach(p=>{if(cb.checked)KEYHOME[p]=true;else delete KEYHOME[p];});if(cb.checked&&!P.homing){setHomingMaster(true);const n=Object.keys(KEYHOME).length;kmStatus("ホーミング突起をオンにしました（いま"+n+"キーに付いています）。");}kmChanged();update();};
+  lab.appendChild(cb);lab.appendChild(document.createTextNode(ids.length>1?" 選択中のキーに付ける":" このキーに付ける"));wrap.appendChild(lab);
+  const row=document.createElement("div");row.className="km-btns";row.style.marginTop="4px";
+  const fj=document.createElement("button");fj.type="button";fj.className="ghost";fj.textContent="F・Jキーに付ける";
+  fj.onclick=()=>{const k=fjKeys();if(!k.length){kmStatus("ベースレイヤーにF・Jのキーが見つかりませんでした。");return;}KEYHOME={};k.forEach(i=>KEYHOME[i]=true);if(!P.homing)setHomingMaster(true);kmStatus("F・Jキー（"+k.map(i=>i+1).join("・")+"番）にホーミング突起を付けました。");kmChanged();update();};
+  const clr=document.createElement("button");clr.type="button";clr.className="ghost";clr.textContent="すべて外す";
+  clr.onclick=()=>{KEYHOME={};kmChanged();update();};
+  row.appendChild(fj);row.appendChild(clr);wrap.appendChild(row);
+  const n=document.createElement("p");n.className="hint";n.style.padding="4px 0 0";
+  const cnt=Object.keys(KEYHOME).length;
+  n.textContent=!P.homing?"パラメータの「ホームポジション用の突起を付ける」がオフのため、今は突起が付きません。ここでチェックを入れるとオンになります。":(cnt?"いま"+cnt+"キーに付いています。":"")+"形と位置は、パラメータの「ホーミング突起」の設定を使います。";
+  wrap.appendChild(n);box.appendChild(wrap);
 }
 let fineLayer=null;
 function renderFine(box,ids){
@@ -412,7 +520,7 @@ async function exportLegendKeys(onlySel){
   if(EXP.format==="3mf"){try{await export3MF(list,st);}catch(e){st.textContent="生成できませんでした（"+(e&&e.message||e)+"）。";}finally{btns.forEach(b=>b.disabled=false);}return;}
   try{
     const q=P.quality==2?[24,160]:[14,96];
-    const files=[{name:"body_plain.stl",data:toSTL(buildMesh(P,q[0],q[1],0))}];const scadRows=[],warns=[];
+    const files=[{name:"body_plain.stl",data:toSTL(buildMesh({...P,homing:false},q[0],q[1],0))}];const scadRows=[],warns=[];
     for(let n=0;n<list.length;n++){
       const pos=list[n];st.textContent="Legendを生成しています… "+(n+1)+" / "+list.length;
       await new Promise(r=>setTimeout(r,0));
@@ -428,7 +536,7 @@ async function exportLegendKeys(onlySel){
         return "      ["+JSON.stringify(t)+", "+fmt(b.cx)+", "+fmt(b.cy)+", "+fmt(b.size)+"]";}).filter(Boolean).join(",\n")+"\n    ]");
     }
     files.push({name:"engraved.scad",data:new TextEncoder().encode(engraveScad(scadRows,list))});
-    files.push({name:"keymap.json",data:new TextEncoder().encode(JSON.stringify({format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG}))});
+    files.push({name:"keymap.json",data:new TextEncoder().encode(JSON.stringify({format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number)}))});
     st.textContent="ZIPにまとめています…";await new Promise(r=>setTimeout(r,0));
     const zip=await makeZipAsync(files);
     const tag=(KM.device||"keyboard").replace(/[^A-Za-z0-9_-]+/g,"_").slice(0,30)||"keyboard";
@@ -483,7 +591,9 @@ function buildExportForm(){
   }
 }
 function engraveScad(rows,list){
-  const body=scadText().replace(/\nkeycap\(\);\s*$/,"\n");
+  const hk=P.homing?list.map((p,i)=>KEYHOME[p]?i:-1).filter(i=>i>=0):[];
+  const body=scadText().replace(/\nhoming      = (true|false);/,"\nhoming      = len([for (h = homing_keys) if (h == key) h]) > 0;   // キーごとの設定（homing_keys）\nhoming_keys = ["+hk.join(", ")+"];")
+    .replace(/\nkeycap\(\);\s*$/,"\n");
   return body+`
 // ===== Legend 刻印版 =====
 // key を変えて1キーずつ出力します（keys/ フォルダの番号と対応）
@@ -508,7 +618,7 @@ difference() {
 let wsTimer=0;
 function saveWs(){clearTimeout(wsTimer);wsTimer=setTimeout(async()=>{
   if(!KM.layers.length)return;
-  const doc={km:{device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,source:KM.source},lcfg:LCFG,keycfg:KEYCFG,exp:EXP,updatedAt:Date.now()};
+  const doc={km:{device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,source:KM.source},lcfg:LCFG,keycfg:KEYCFG,home:Object.keys(KEYHOME).map(Number),exp:EXP,updatedAt:Date.now()};
   try{if(Store.mode==="db")await Store.db.doc("data/users/"+Store.uid+"/lib").collection("ws").doc("current").set(doc);
     else if(Store.mode==="local")localStorage.setItem(LS+"ws",JSON.stringify(doc));}catch(_){}
 },1200);}
@@ -517,7 +627,7 @@ async function loadWs(){
   try{if(Store.mode==="db"){const s=await Store.db.doc("data/users/"+Store.uid+"/lib").collection("ws").doc("current").get();if(s.exists)doc=s.data();}
     else if(Store.mode==="local"){doc=JSON.parse(localStorage.getItem(LS+"ws")||"null");}}catch(_){}
   if(doc&&doc.km&&Array.isArray(doc.km.layers)&&doc.km.layers.length){
-    LCFG={...LDEF,...(doc.lcfg||{})};KEYCFG=JSON.parse(JSON.stringify(doc.keycfg||{}));EXP={...EDEF,...(doc.exp||{})};buildExportForm();
+    LCFG={...LDEF,...(doc.lcfg||{})};KEYCFG=JSON.parse(JSON.stringify(doc.keycfg||{}));KEYHOME={};if(Array.isArray(doc.home))doc.home.forEach(i=>{if(Number.isInteger(i)&&i>=0)KEYHOME[i]=true;});EXP={...EDEF,...(doc.exp||{})};buildExportForm();
     KM.device=doc.km.device||"";KM.layers=doc.km.layers;KM.behaviors=doc.km.behaviors||{};KM.keys=doc.km.keys||[];KM.source=doc.km.source||"";
     sel.clear();curKey=KM.keys.length?0:null;if(curKey!==null)sel.add(0);
     buildLegendForm();renderKm();kmStatus("前回のキーマップ（"+(KM.device||"キーボード")+"）を復元しました。");rebuildPreview();
@@ -527,12 +637,13 @@ async function loadWs(){
 function initKm(){
   document.getElementById("km-usb").onclick=()=>connect("usb");
   document.getElementById("km-ble").onclick=()=>connect("ble");
+  document.getElementById("km-vial").onclick=()=>connectVial();
   document.getElementById("km-ble-all").onclick=()=>connect("ble-all");
   document.getElementById("km-logcopy").onclick=async()=>{try{await navigator.clipboard.writeText(kmLogLines.join("\n"));kmStatus("接続ログをコピーしました。");}catch(_){kmStatus("コピーできませんでした。ログを選択してコピーしてください。");}};
   if(!("bluetooth" in navigator))document.getElementById("km-ble-all").hidden=true;
   document.getElementById("km-sample").onclick=loadSample;
   const fi=document.getElementById("km-file");document.getElementById("km-open").onclick=()=>fi.click();
-  fi.onchange=()=>{if(fi.files&&fi.files[0])importKeymapFile(fi.files[0]);fi.value="";};
+  fi.onchange=()=>{const fs=fi.files?[...fi.files]:[];fi.value="";if(fs.length)importKeymapFiles(fs);};
   document.getElementById("km-reload").onclick=()=>readFromDevice();
   document.getElementById("km-disconnect").onclick=async()=>{if(client){try{await client.close();}catch(_){}}client=null;renderKmButtons();kmStatus("切断しました。");};
   document.getElementById("km-export").onclick=exportKeymapJson;
@@ -547,5 +658,6 @@ function initKm(){
   window.addEventListener("resize",()=>drawMap());
   if(!("serial" in navigator))document.getElementById("km-usb").title="このブラウザはUSB接続に対応していません";
   if(!("bluetooth" in navigator))document.getElementById("km-ble").title="このブラウザはBluetooth接続に対応していません";
+  if(!("hid" in navigator))document.getElementById("km-vial").title="このブラウザはVialの接続（WebHID）に対応していません";
   buildLegendForm();buildExportForm();renderKm();
 }

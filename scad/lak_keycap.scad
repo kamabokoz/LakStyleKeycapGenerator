@@ -31,7 +31,13 @@ cross_w     = 1.35;  // FDM:1.35前後 / 光造形:1.25前後
 cross_depth = 3.0;   // 内側天井より深くすると天面の中まで掘ります
 chamfer     = 0.3;
 
-homing      = false;
+homing      = false; // ホームポジション用の突起
+homing_type = 0;     // 0:バー / 1:ドット
+homing_len  = 5;     // バーの長さ（端から端まで）
+homing_w    = 0.9;   // 太さ（ドットは直径）
+homing_h    = 0.3;   // 天面からの高さ
+homing_x    = 0;     // 天面中心からの位置（左右）
+homing_y    = -4;    // 天面中心からの位置（上下、マイナスで手前）
 N           = 12;
 $fa = 2; $fs = 0.2;
 
@@ -159,12 +165,20 @@ module cross_hole() {
         }
 }
 
+// 天面の高さ（中央部・段差・外周帯）
+function sdrr(x, y, sz, r) = let(h = sz/2 - r, qx = abs(x) - h, qy = abs(y) - h)
+    norm([max(qx, 0), max(qy, 0)]) + min(max(qx, qy), 0) - r;
+function topz(x, y) = let(d = -sdrr(x, y, top_size, r_top)) ztop(x, y, max(d, 0), d < edge_band);
+
+// ホーミング突起：バーは両端、ドットは1点の高さに合わせて置き、下側は天面に0.3mm埋め込む
 module homing_bar() {
-    z = ztop(0, -4, w_half - 4, w_half - 4 < edge_band);
-    translate([0, -4, z - 0.2])
-        hull() {
-            translate([-2, 0, 0]) sphere(d = 0.9);
-            translate([ 2, 0, 0]) sphere(d = 0.9);
+    r = homing_w / 2;
+    L = homing_type == 1 ? 0 : max(0, homing_len - homing_w);
+    hull() for (ex = L > 0 ? [-L/2, L/2] : [0])
+        let(x = homing_x + ex, y = homing_y, z = topz(x, y))
+        translate([x, y, z]) {
+            scale([r, r, homing_h]) sphere(1, $fn = 32);
+            translate([0, 0, -0.3]) cylinder(r = r, h = 0.3, $fn = 32);
         }
 }
 

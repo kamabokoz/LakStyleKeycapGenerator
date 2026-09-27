@@ -182,16 +182,36 @@ function buildMesh(P,N,M,offx,opts){
   }
   orient(T);
   const parts=[T];
-  if(P.homing){
-    const H=[],cz=ztop(0,-4,D.w-4,D.w-4<P.edge_band,P,D)-0.2,U=24,V=10,rx=2.45,rs=0.45;
-    const pt=(u,v)=>{const th=u/U*2*Math.PI,ph=v/V*Math.PI;return[offx+rx*Math.sin(ph)*Math.cos(th),-4+rs*Math.sin(ph)*Math.sin(th),cz+rs*Math.cos(ph)];};
-    for(let v=0;v<V;v++)for(let u=0;u<U;u++){
-      const a=pt(u,v),b=pt(u+1,v),cc=pt(u+1,v+1),d=pt(u,v+1);
-      if(v>0)H.push([a,b,cc,0]);if(v<V-1)H.push([a,cc,d,0]);
-    }
-    orient(H);parts.push(H);
-  }
+  if(P.homing)parts.push(homingMesh(P,D,offx));
   return [].concat(...parts);
+}
+// ---- homing bump ----
+// height of the finished top at (x,y) (plateau, step or outer band)
+function topZ(x,y,P,D){const d=-sdRR(x,y,P.top_size,P.r_top);return ztop(x,y,Math.max(d,0),d<P.edge_band,P,D);}
+// homing parameters with defaults for data saved before these existed
+function homingSpec(P){
+  const n=(v,d)=>typeof v==="number"&&isFinite(v)?v:d;
+  const dot=P.homing_type==1,w=Math.max(0.2,n(P.homing_w,0.9));
+  return{dot,w,r:w/2,len:dot?w:Math.max(w,n(P.homing_len,4.9)),h:Math.max(0.05,n(P.homing_h,0.25)),x:n(P.homing_x,0),y:n(P.homing_y,-4),embed:0.3};
+}
+// capsule (bar) or sphere (dot) revolved around its long axis, bent to follow the top surface:
+// the upper half protrudes h above the surface, the lower half sinks `embed` into the body
+function homingMesh(P,D,offx){
+  const S=homingSpec(P),r=S.r,L=Math.max(0,S.len-S.w),A=28,NC=8,prof=[];
+  for(let i=0;i<=NC;i++){const a=Math.PI-i/NC*Math.PI/2;prof.push([-L/2+r*Math.cos(a),r*Math.sin(a)]);}      // left cap
+  const ns=L>1e-6?Math.max(1,Math.ceil(L/0.6)):0;
+  for(let i=1;i<ns;i++)prof.push([-L/2+L*i/ns,r]);                                                          // straight part
+  for(let i=L>1e-6?0:1;i<=NC;i++){const a=Math.PI/2-i/NC*Math.PI/2;prof.push([L/2+r*Math.cos(a),r*Math.sin(a)]);} // right cap
+  const place=(lx,ly,lz)=>{const X=S.x+lx,Y=S.y+ly;return[X+offx,Y,topZ(X,Y,P,D)+(lz>0?lz*S.h/r:lz*S.embed/r)];};
+  const chain=prof.map(([px,rho])=>{
+    if(rho<1e-9)return[place(px,0,0)];
+    const ring=[];for(let k=0;k<A;k++){const a=k/A*2*Math.PI;ring.push(place(px,rho*Math.cos(a),rho*Math.sin(a)));}return ring;});
+  const T=[];
+  for(let k=0;k<chain.length-1;k++){const a=chain[k],b=chain[k+1];
+    if(a.length===1){for(let i=0;i<A;i++)T.push([a[0],b[i],b[(i+1)%A],0]);continue;}
+    if(b.length===1){for(let i=0;i<A;i++)T.push([a[i],b[0],a[(i+1)%A],0]);continue;}
+    for(let i=0;i<A;i++){const j=(i+1)%A;T.push([a[i],b[i],b[j],0]);T.push([a[i],b[j],a[j],0]);}}
+  return orient(T);
 }
 function steinerPts(outer,holes,step,clear){
   let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const p of outer){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]);y1=Math.max(y1,p[1]);}

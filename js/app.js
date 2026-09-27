@@ -4,10 +4,12 @@
 const BUILD="standalone";
 // defaults = shape close to the original LAK
 const DEF={pitch:17,gap:1,top_size:16,edge_h:3.5,r_base:0.5,r_top:0.5,boundary:0,dome:-0.6,dome_scope:1,edge_drop:2.8,edge_band:0.75,step_run:1,step_rs:1,step_rf:0.6,r_plateau:1.8,dome_type:1,
-  wall:1.2,cavity_h:2.6,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,quality:1};
+  wall:1.2,cavity_h:2.6,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,
+  homing_type:0,homing_len:5,homing_w:0.9,homing_h:0.3,homing_y:-4,homing_x:0,quality:1};
 // values of the earlier defaults: used to fill keys missing from older saved data and v1 share links
 const LEGACY_DEF={pitch:17,gap:1,top_size:14.2,edge_h:4.2,r_base:1.2,r_top:2,boundary:0,dome:0.4,dome_scope:0,edge_drop:0.5,edge_band:2,step_run:0,step_rs:0,step_rf:0,r_plateau:0.3,dome_type:0,
-  wall:1.2,cavity_h:3.2,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,quality:1};
+  wall:1.2,cavity_h:3.2,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,
+  homing_type:0,homing_len:4.9,homing_w:0.9,homing_h:0.25,homing_y:-4,homing_x:0,quality:1};
 let P={...DEF};
 
 const GROUPS=[
@@ -40,8 +42,16 @@ const GROUPS=[
     {k:"cross_depth",label:"十字穴の深さ",min:2,max:5,step:0.05},
     {k:"chamfer",label:"入口の面取り",hint:"エレファントフット対策",min:0,max:0.6,step:0.05},
     {k:"stem_od",label:"ステム外径",min:4.8,max:6.5,step:0.05}]},
-  {title:"オプション",open:false,items:[
+  {title:"ホーミング突起",open:false,items:[
     {check:"homing",label:"ホームポジション用の突起を付ける"},
+    {note:"キーマップを読み込んでいるときは、突起を付けるキーをキーの設定欄で選べます（最初はF・Jキーに付きます）。形と位置はここの設定を全キー共通で使います。"},
+    {seg:"homing_type",label:"形",options:[["バー",0],["ドット",1]],dep:()=>P.homing},
+    {k:"homing_len",label:"長さ",hint:"端から端まで",min:1,max:12,step:0.1,dep:()=>P.homing&&P.homing_type==0},
+    {k:"homing_w",label:"太さ",hint:"バーの幅。ドットは直径",min:0.3,max:3,step:0.05,dep:()=>P.homing},
+    {k:"homing_h",label:"高さ",hint:"天面からの出っ張り",min:0.1,max:1.2,step:0.05,dep:()=>P.homing},
+    {k:"homing_y",label:"上下の位置",hint:"天面の中心から。マイナスで手前（下側）",min:-7,max:7,step:0.1,dep:()=>P.homing},
+    {k:"homing_x",label:"左右の位置",hint:"天面の中心から。マイナスで左",min:-7,max:7,step:0.1,dep:()=>P.homing}]},
+  {title:"オプション",open:false,items:[
     {seg:"quality",label:"STLの分割の細かさ",options:[["標準",1],["高精細",2]]}]}
 ];
 
@@ -51,7 +61,9 @@ const resets={};
 function defText(k){const v=DEF[k];if(typeof v==="boolean")return v?"オン":"オフ";const g=GROUPS.flatMap(x=>x.items).find(i=>i.seg===k);if(g){const o=g.options.find(o=>o[1]===v);return o?o[0]:String(v);}return fmt(v)+"mm";}
 function mkReset(k,apply){const b=document.createElement("button");b.type="button";b.className="rst";b.innerHTML=RST_SVG;
   b.title="初期値（"+defText(k)+"）に戻す";b.setAttribute("aria-label",b.title);
-  b.onclick=()=>{apply(DEF[k]);update();};resets[k]=b;return b;}
+  b.onclick=()=>{apply(DEF[k]);edited(k);update();};resets[k]=b;return b;}
+// a homing setting was changed by the user (keymap mode shows a key that has the bump)
+function edited(k){if(/^homing/.test(k)&&typeof homingEdited==="function")homingEdited(k);}
 function refreshResets(){for(const k in resets)resets[k].disabled=(P[k]===DEF[k]);}
 const inputs={};
 function buildForm(){
@@ -68,16 +80,18 @@ function buildForm(){
         head.appendChild(mkReset(it.seg,setSeg));w.appendChild(head);
         it.options.forEach(([t,v])=>{const b=document.createElement("button");b.type="button";b.textContent=t;
           b.setAttribute("aria-pressed",String(P[it.seg]===v));
-          b.onclick=()=>{setSeg(v);update();};opts.push([b,v]);
+          b.onclick=()=>{setSeg(v);edited(it.seg);update();};opts.push([b,v]);
           w.appendChild(b);});
         d.appendChild(w);inputs[it.seg]={seg:w,it};
       }else if(it.check){
         const l=document.createElement("div");l.className="check";
         const lab=document.createElement("label");lab.style.cssText="display:flex;align-items:center;gap:10px;cursor:pointer";
         const c=document.createElement("input");c.type="checkbox";c.checked=P[it.check];
-        c.onchange=()=>{P[it.check]=c.checked;update();};
+        c.onchange=()=>{P[it.check]=c.checked;edited(it.check);update();};
         lab.appendChild(c);lab.appendChild(document.createTextNode(it.label));l.appendChild(lab);
         l.appendChild(mkReset(it.check,v=>{P[it.check]=v;c.checked=v;}));d.appendChild(l);inputs[it.check]={check:c};
+      }else if(it.note){
+        const h=document.createElement("p");h.className="hint";h.style.padding="0 0 10px";h.textContent=it.note;d.appendChild(h);
       }else if(it.preset){
         const w=document.createElement("div");w.className="seg";
         const lab=document.createElement("div");lab.style.cssText="width:100%;font-size:14px";lab.textContent="十字穴のプリセット";w.appendChild(lab);
@@ -93,8 +107,8 @@ function buildForm(){
         const num=document.createElement("input");num.type="number";num.id=id;num.min=it.min;num.max=it.max;num.step=it.step;num.value=P[it.k];num.inputMode="decimal";
         const rb=mkReset(it.k,v=>setVal(it.k,v));
         const rng=document.createElement("input");rng.type="range";rng.min=it.min;rng.max=it.max;rng.step=it.step;rng.value=P[it.k];rng.setAttribute("aria-label",it.label);
-        rng.oninput=()=>{P[it.k]=parseFloat(rng.value);num.value=fmt(P[it.k]);update();};
-        num.onchange=()=>{let v=parseFloat(num.value);if(isNaN(v))v=P[it.k];v=Math.min(it.max,Math.max(it.min,v));P[it.k]=v;num.value=fmt(v);rng.value=v;update();};
+        rng.oninput=()=>{P[it.k]=parseFloat(rng.value);num.value=fmt(P[it.k]);edited(it.k);update();};
+        num.onchange=()=>{let v=parseFloat(num.value);if(isNaN(v))v=P[it.k];v=Math.min(it.max,Math.max(it.min,v));P[it.k]=v;num.value=fmt(v);rng.value=v;edited(it.k);update();};
         r.appendChild(lab);r.appendChild(num);r.appendChild(rb);r.appendChild(rng);d.appendChild(r);inputs[it.k]={num,rng,row:r,it};
       }
     });
@@ -109,6 +123,13 @@ function refreshDeps(){for(const k in inputs){const i=inputs[k];const el=i.row||
 
 // ---------- validation ----------
 function sdRR(x,y,s,r){const h=s/2-r,qx=Math.abs(x)-h,qy=Math.abs(y)-h;return Math.hypot(Math.max(qx,0),Math.max(qy,0))+Math.min(Math.max(qx,qy),0)-r;}
+// homing bump must stay on the flat-ish centre of the top
+function homingWarn(Q,D){
+  const S=homingSpec(Q),pr=plateauRect(Q,D),L=Math.max(0,S.len-S.w);
+  const pts=[];for(let i=0;i<16;i++){const a=i/16*2*Math.PI;for(const ex of L>0?[-L/2,L/2]:[0])pts.push([S.x+ex+S.r*Math.cos(a),S.y+S.r*Math.sin(a)]);}
+  const out=pts.some(p=>(Q.boundary==2?sdRR(p[0],p[1],Q.top_size,Q.r_top):sdRR(p[0],p[1],pr.size,pr.r))>-0.05);
+  return out?(Q.boundary==2?"ホーミング突起が天面からはみ出しています。位置か長さを調整してください。":"ホーミング突起が中央部からはみ出して段差にかかっています。位置か長さを調整してください。"):"";
+}
 function analyze(){
   const D=derive(P),errs=[],warns=[];
   if(P.top_size>D.base+1e-9)errs.push("天面の幅が底面（"+fmt(D.base)+"mm）より大きくなっています。側面を垂直にするなら同じ値にしてください。");
@@ -128,6 +149,7 @@ function analyze(){
   const cr=Math.hypot(P.cross_len/2,P.cross_w/2);
   if(cr>P.stem_od/2-0.4)warns.push("十字穴に対してステム外径が細く、肉が薄くなっています。");
   if(itop<P.stem_od+1)warns.push("内側空洞がステムに対して狭くなっています。側壁を薄くしてください。");
+  if(P.homing){const w=homingWarn(P,D);if(w)warns.push(w);}
   return {errs,warns,thin,center:P.edge_h+D.E+D.dome,base:D.base};
 }
 
@@ -197,11 +219,12 @@ function rebuildPreview(){
     const keysToShow=view==="row"?[[curKey-1,-P.pitch],[curKey,0],[curKey+1,P.pitch]].filter(([k])=>k>=0&&k<KM.keys.length):[[curKey,0]];
     Promise.all(keysToShow.map(([k,x])=>legendParts(k,x,8,48))).then(arr=>{if(tok!==prevTok)return;
       const set=new Set(keysToShow.map(([,x])=>x));
-      tris=[];xs.forEach(x=>{if(!set.has(x))tris=tris.concat(buildMesh(P,8,48,x));});
+      tris=[];xs.forEach(x=>{if(!set.has(x))tris=tris.concat(buildMesh(paramsFor(null),8,48,x));});
       arr.forEach(pt=>{tris=tris.concat(pt.body);if(LCFG.style!=="engrave")tris=tris.concat(pt.legend);});dirty=true;
       const hint=document.getElementById("km-warn");
       legendShapes(curKey).then(r=>{const w=[];if(r.dropped.length)w.push("入りきらない・重なるため省いたLegend: "+r.dropped.join(", "));
         if(LCFG.style==="engrave"&&r.shapes.length&&minPocketFloor(r.shapes)<0.5)w.push("彫り込みの底と内側の天井の間が0.5mm未満です。彫り込みを浅くしてください。");
+        if(KEYHOME[curKey]&&homingHitsLegend(r.shapes))w.push("このキーのホーミング突起がLegendに重なっています。突起の位置を動かすか、Legendの位置を調整してください。");
         hint.textContent=w.join(" ");hint.hidden=!w.length;});
     }).catch(e=>console.error(e));
   }
@@ -307,6 +330,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",()=>dirty
 // ---------- update ----------
 let lastA=null;
 function update(){
+  refreshDeps();
   const A=analyze();lastA=A;
   document.getElementById("s-center").textContent=fmt(A.center)+" mm";
   document.getElementById("s-thin").textContent=isFinite(A.thin)?fmt(A.thin)+" mm":"–";
@@ -490,6 +514,12 @@ cross_depth = ${n(P.cross_depth)};
 chamfer     = ${n(P.chamfer)};
 
 homing      = ${P.homing?"true":"false"};
+homing_type = ${P.homing_type};   // 0:バー / 1:ドット
+homing_len  = ${n(P.homing_len)};
+homing_w    = ${n(P.homing_w)};
+homing_h    = ${n(P.homing_h)};
+homing_x    = ${n(P.homing_x)};
+homing_y    = ${n(P.homing_y)};
 N           = 12;
 $fa = 2; $fs = 0.2;
 
