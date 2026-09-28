@@ -220,7 +220,8 @@ function rebuildPreview(){
     Promise.all(keysToShow.map(([k,x])=>legendParts(k,x,8,48))).then(arr=>{if(tok!==prevTok)return;
       const set=new Set(keysToShow.map(([,x])=>x));
       tris=[];xs.forEach(x=>{if(!set.has(x))tris=tris.concat(buildMesh(paramsFor(null),8,48,x));});
-      arr.forEach(pt=>{tris=tris.concat(pt.body);if(LCFG.style!=="engrave")tris=tris.concat(pt.legend);});dirty=true;
+      const lm=legendMatFn(); // per-layer filaments (3MF): show every legend (also inlays) in its filament colour
+      arr.forEach(pt=>{tris=tris.concat(pt.body);if(lm)pt.legendBy.forEach(g=>{tris=tris.concat(recolor(g.tris,lm(g.layer)));});else if(LCFG.style!=="engrave")tris=tris.concat(pt.legend);});dirty=true;
       const hint=document.getElementById("km-warn");
       legendShapes(curKey).then(r=>{const w=[];if(r.dropped.length)w.push("入りきらない・重なるため省いたLegend: "+r.dropped.join(", "));
         if(LCFG.style==="engrave"&&r.shapes.length&&minPocketFloor(r.shapes)<0.5)w.push("彫り込みの底と内側の天井の間が0.5mm未満です。彫り込みを浅くしてください。");
@@ -230,7 +231,9 @@ function rebuildPreview(){
   }
 }
 const L=(()=>{const v=[-0.45,0.7,-0.55],n=Math.hypot(...v);return v.map(x=>x/n);})();
-const COLS=[[216,213,205],[160,157,150],[110,108,103],[58,62,68]];
+// 0 body, 1 stem, 2 cross hole, 3 legend; 4.. preview colours for filament 1..8 (per-layer legends)
+const COLS=[[216,213,205],[160,157,150],[110,108,103],[58,62,68],
+  [245,243,238],[58,62,68],[40,128,110],[214,98,48],[58,108,196],[180,62,130],[204,164,36],[186,52,52]];
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
 function render3D(){
   ctx.clearRect(0,0,W,H);

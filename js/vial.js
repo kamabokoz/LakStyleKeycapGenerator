@@ -291,6 +291,16 @@ const VIAL=(()=>{
     if(b.qs!==undefined){const n=parseName(b.qs);return n===null?nameFallback(b.qs):codeLabel(n,meta,layers,host);}
     return "";
   }
+  // layer switched to by a keycode (v6 numbering): {layer, tap} (tap: layer-tap, the key also types something)
+  function layerOf(k){
+    if(k==null||k>=0x10000)return null;
+    if(k>=0x4000&&k<0x5000)return{layer:(k>>8)&0xF,tap:true};
+    if(k>=0x5000&&k<0x5200)return{layer:(k>>5)&0xF,tap:false};
+    if(k>=0x5200&&k<0x52A0)return{layer:k&0x1F,tap:false};   // TO MO DF TG OSL
+    if(k>=0x52C0&&k<0x52E0)return{layer:k&0x1F,tap:false};   // TT
+    return null;
+  }
+  function layerTarget(b){const k=b.qk!==undefined?b.qk:parseName(b.qs);return layerOf(k);}
   const isVialBinding=b=>!!b&&(b.qk!==undefined||b.qs!==undefined);
 
   // ===== keymap assembly =====
@@ -382,5 +392,5 @@ const VIAL=(()=>{
   }
   const isVil=d=>d&&Array.isArray(d.layout)&&(d.version!==undefined||d.uid!==undefined||d.vial_protocol!==undefined||d.via_protocol!==undefined);
   const isDef=d=>d&&d.matrix&&d.layouts&&Array.isArray(d.layouts.keymap);
-  return{unxz,kle,layoutFromDef,optionGroups,unpackOptions,parseName,codeLabel,label,isVialBinding,fromVil,open,isVil,isDef,v5to6,_test:{gridLayout,assemble}};
+  return{layerOf,layerTarget,unxz,kle,layoutFromDef,optionGroups,unpackOptions,parseName,codeLabel,label,isVialBinding,fromVil,open,isVil,isDef,v5to6,_test:{gridLayout,assemble}};
 })();

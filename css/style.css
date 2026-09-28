@@ -100,6 +100,26 @@ header p{margin:2px 0 0;color:var(--muted);font-size:13px}
 .km-nudge button{font:inherit;font-size:15px;min-width:44px;min-height:40px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;cursor:pointer}
 .km-nudge button.ghost{font-size:13px;background:transparent;padding:0 12px}
 .km-exgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;padding-bottom:4px}
+.km-svgsel{grid-column:1 / -1;font:inherit;font-size:14px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0}
+.km-icongrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px;padding-bottom:6px}
+.km-icongrid button{display:grid;justify-items:center;gap:3px;padding:6px 4px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);cursor:pointer;font:inherit}
+.km-icongrid button[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--panel)}
+.km-iconimg{width:40px;height:40px;border-radius:6px;background:#fff;display:grid;place-items:center}
+.km-iconimg img{max-width:30px;max-height:30px}
+.km-iconname{font-size:11px;line-height:1.3;text-align:center;color:var(--muted);overflow-wrap:anywhere}
+.km-svglist{display:grid;gap:0}
+.km-svgrow{display:grid;grid-template-columns:44px minmax(0,1fr) auto;grid-template-areas:"th nm del" "th md sc";gap:6px 10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.km-svgthumb{grid-area:th;width:44px;height:44px;border-radius:8px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.km-svgthumb img{max-width:36px;max-height:36px}
+.km-svgrow>input{grid-area:nm;font:inherit;font-size:14px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0}
+.km-svgrow>button{grid-area:del;font:inherit;font-size:13px;border:1px solid var(--line);background:transparent;color:var(--err);border-radius:7px;padding:4px 10px;cursor:pointer}
+.km-svgrow>select{grid-area:md;font:inherit;font-size:13px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0}
+.km-svgscale{grid-area:sc;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.km-svgscale input{width:64px;font:inherit;font-size:14px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);text-align:right}
+.km-extable{display:grid;gap:0;margin-top:2px}
+.km-exrow{display:grid;grid-template-columns:18px minmax(0,1fr) 76px;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
+.km-exrow input{font:inherit;font-size:14px;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0;text-align:right}
+.km-swatch{width:18px;height:18px;border-radius:5px;border:1px solid var(--line)}
 .km-exgrid label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
 .km-exgrid input,.km-exgrid select{font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0}
 details{background:var(--panel);border-radius:12px;padding:4px 16px}

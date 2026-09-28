@@ -3,9 +3,17 @@
 
 // ---------- keymap & legends ----------
 const KM={device:"",layers:[],behaviors:{},keys:[],source:""};
-const LDEF={host:"jis",font:"IBM Plex Sans JP",weight:700,mainSize:4.0,subSize:2.3,style:"engrave",depth:0.6,height:0.4,embed:0.3};
+const LDEF={host:"jis",font:"IBM Plex Sans JP",weight:700,mainSize:4.0,subSize:2.3,style:"engrave",depth:0.6,height:0.4,embed:0.3,
+  mark:false,markShape:"dot",markSize:1.6,markAt:"tl",markOnly:false};
 let LCFG={...LDEF};
 let KEYCFG={}; // pos -> [{layer, at, text?}]
+let SVGS={}; // SVG image library: id -> {name, svg, mode:"dark"|"all", scale}
+const svgImgs=new Map(); // id -> {img} thumbnails for the key map
+function svgImg(id){if(!SVGS[id])return null;let e=svgImgs.get(id);if(e)return e.img;e={img:null};svgImgs.set(id,e);
+  LEG.svgThumb(SVGS[id].svg,96).then(im=>{e.img=im;drawMap();}).catch(()=>{});return null;}
+function svgKey(id){const v=SVGS[id];return v?id+":"+v.mode+":"+(+v.scale||1):"";}
+// layer -1 = image-only slot (a logo that does not belong to any keymap layer)
+function layerName(li){return li<0?"画像":((KM.layers[li]&&KM.layers[li].name)||("Layer "+li));}
 var KEYHOME={}; // pos -> true : keys that get the homing bump in keymap output
 // shape parameters for one key: with a keymap loaded, the homing bump is chosen per key
 function paramsFor(pos){return KM.layers.length&&pos!==null&&pos!==undefined?{...P,homing:P.homing&&!!KEYHOME[pos]}:P;}
@@ -29,7 +37,16 @@ function homingEdited(k){
   if(msg||sw){drawMap();renderEditor();saveWs();}   // only when something changed (sliders call this on every tick)
 }
 function setHomingMaster(on){P.homing=on;const i=inputs.homing;if(i&&i.check)i.check.checked=on;}
-const EDEF={format:"stl",bodyExt:1,legendExt:2,plate:256};
+const EDEF={format:"stl",bodyExt:1,legendExt:2,plate:256,legendMode:"one",layerExt:{}};
+// filament for a layer's legend when legends are split by layer (default: legend filament + layer index)
+function layerExt(li){const v=EXP.layerExt&&EXP.layerExt[li];return Number.isInteger(v)&&v>=1&&v<=16?v:li<0?EXP.legendExt:Math.min(16,EXP.legendExt+li);}
+// preview material for a filament number: same as body -> body colour, otherwise a distinct colour per filament
+function extMat(ext){return ext===EXP.bodyExt?0:4+((ext-1)%8);}
+// when 3MF with per-layer legends is selected, the preview colours legends by their filament
+function legendMatFn(){return EXP.format==="3mf"&&EXP.legendMode==="layer"?li=>extMat(layerExt(li)):null;}
+function recolor(T,m){return T.map(t=>[t[0],t[1],t[2],m]);}
+// layers that show a legend on at least one key
+function usedLayers(){const u=new Set();KM.keys.forEach((_,p)=>{slotsOf(p).forEach(s=>{if(slotShown(s,p)||(s.svg&&SVGS[s.svg]))u.add(s.layer);});keyMarks(p).forEach(t=>u.add(t));});return [...u].sort((a,b)=>((a<0)-(b<0))||a-b);} // image-only (-1) last
 let EXP={...EDEF};
 const sel=new Set();let multiSel=false,curKey=null,client=null;
 const AT=[["c","中央"],["tl","左上"],["tr","右上"],["bl","左下"],["br","右下"],["t","上"],["b","下"]];
@@ -37,6 +54,47 @@ function slotsOf(pos){return KEYCFG[pos]||[{layer:0,at:"c"}];}
 function bindingAt(li,pos){const L=KM.layers[li];return L&&L.bindings[pos];}
 function autoLabel(li,pos){const b=bindingAt(li,pos);if(!b)return "";
   return VIAL.isVialBinding(b)?VIAL.label(b,KM.behaviors._qmk,KM.layers,LCFG.host):LBL.label(b,KM.behaviors,KM.layers,LCFG.host);}
+// layer key: the layer this binding switches to ({layer, tap}) or null. ZMK behaviours and Vial/QMK keycodes
+function layerTarget(b){
+  if(!b)return null;
+  if(VIAL.isVialBinding(b))return VIAL.layerTarget(b);
+  const B=KM.behaviors[b.b];if(!B)return null;
+  const n=(B.name||"").toLowerCase(),c=B.consts||{};
+  const idx=id=>{const i=KM.layers.findIndex(l=>l.id===id);return i>=0?i:id;};
+  if(/layer[- ]?tap/.test(n))return{layer:idx(b.p1),tap:true};
+  if(/momentary layer|sticky layer|toggle layer|to layer/.test(n)||c.p1Kind==="layer")return{layer:idx(b.p1),tap:false};
+  return null;
+}
+// layers a key's marks point to: from the base layer (layer-taps included) and every layer shown on the key
+function keyMarks(pos){
+  if(!LCFG.mark)return [];
+  const out=[];
+  for(const li of [...new Set([0,...slotsOf(pos).map(s=>s.layer)])].sort((a,b)=>a-b)){
+    const t=layerTarget(bindingAt(li,pos));if(t&&t.layer>=0&&!out.includes(t.layer))out.push(t.layer);}
+  return out;
+}
+// text printed for a slot: with "mark only", plain layer keys (not layer-taps) print just the mark
+function slotShown(s,pos){
+  if(LCFG.mark&&LCFG.markOnly&&!s.text){const t=layerTarget(bindingAt(s.layer,pos));if(t&&!t.tap)return "";}
+  return slotText(s,pos);
+}
+// 2D outline (CCW) of one mark centred at cx,cy
+function markOutline(shape,size,cx,cy){
+  const o=[],r=size/2;
+  if(shape==="square"){const h=r*0.9,rc=Math.min(0.25,h*0.3);for(const [qx,qy,a0] of [[1,1,0],[-1,1,90],[-1,-1,180],[1,-1,270]])for(let i=0;i<=4;i++){const a=(a0+i*22.5)*Math.PI/180;o.push([cx+qx*(h-rc)+rc*Math.cos(a),cy+qy*(h-rc)+rc*Math.sin(a)]);}}
+  else if(shape==="tri"){const h=size*0.9;for(const a of [90,210,330]){const t=a*Math.PI/180;o.push([cx+h*0.62*Math.cos(t),cy-h*0.12+h*0.62*Math.sin(t)]);}}
+  else if(shape==="bar"){const w=size*1.9,t=Math.max(0.25,size*0.28),e=w/2-t;for(let i=0;i<=12;i++){const a=(-90+i*15)*Math.PI/180;o.push([cx+e+t*Math.cos(a),cy+t*Math.sin(a)]);}for(let i=0;i<=12;i++){const a=(90+i*15)*Math.PI/180;o.push([cx-e+t*Math.cos(a),cy+t*Math.sin(a)]);}}
+  else{for(let i=0;i<32;i++){const a=i/32*2*Math.PI;o.push([cx+r*Math.cos(a),cy+r*Math.sin(a)]);}}
+  return{outer:o,holes:[]};
+}
+function markWidth(){return LCFG.markShape==="bar"?LCFG.markSize*1.9:LCFG.markSize;}
+// centres of n marks at the chosen corner, lined up towards the middle
+function markCentres(n){
+  const s=plateauHalf(),w=markWidth(),h=LCFG.markShape==="bar"?Math.max(0.5,LCFG.markSize*0.56):LCFG.markSize,gap=Math.max(0.5,LCFG.markSize*0.4),at=LCFG.markAt;
+  const cy=at[0]==="t"?s-h/2-0.15:-(s-h/2-0.15),tot=n*w+(n-1)*gap;
+  const x0=at.includes("l")?-s+w/2+0.15:at.includes("r")?s-w/2-0.15-(n-1)*(w+gap):-tot/2+w/2;
+  return Array.from({length:n},(_,i)=>[x0+i*(w+gap),cy]);
+}
 function slotText(s,pos){return (s.text!==undefined&&s.text!==null&&s.text!=="")?s.text:autoLabel(s.layer,pos);}
 function kmStatus(t,err){const e=document.getElementById("km-status");e.textContent=t||"";e.className="km-status"+(err?" err":"");}
 
@@ -100,31 +158,41 @@ async function legendShapes(pos){
   await ensureFont(LCFG.font);
   const slots=slotsOf(pos),multi=slots.length>1;
   const D=derive(P);
-  const key=JSON.stringify([pos,slots.map(s=>[slotText(s,pos),s.at,+s.dx||0,+s.dy||0]),LCFG.font,LCFG.weight,LCFG.mainSize,LCFG.subSize,P.top_size,P.edge_band,P.boundary,P.r_top,P.step_run,P.step_rs,P.step_rf,P.r_plateau,P.edge_drop,multi]);
+  const marks=keyMarks(pos);
+  const key=JSON.stringify([pos,slots.map(s=>[slotShown(s,pos),svgKey(s.svg),s.at,+s.dx||0,+s.dy||0]),marks,LCFG.markShape,LCFG.markSize,LCFG.markAt,LCFG.font,LCFG.weight,LCFG.mainSize,LCFG.subSize,P.top_size,P.edge_band,P.boundary,P.r_top,P.step_run,P.step_rs,P.step_rf,P.r_plateau,P.edge_drop,multi]);
   let r=shapeCache.get(key);
   if(!r){
-    const shapes=[],dropped=[];
-    for(const s of slots){const t=slotText(s,pos);if(!t)continue;const bx=slotBoxFor(s,multi);
-      const sh=await LEG.textShapes(t,{font:LCFG.font,weight:LCFG.weight,size:bx.size,maxW:bx.maxW,cx:bx.cx,cy:bx.cy});
+    const shapes=[],dropped=[],groups=[];
+    const addGroup=(layer,sh)=>{const g=groups.find(x=>x.layer===layer);if(g)g.shapes.push(...sh);else groups.push({layer,shapes:sh.slice()});};
+    for(const s of slots){const im=s.svg&&SVGS[s.svg],t=im?"":slotShown(s,pos);if(!im&&!t)continue;const bx=slotBoxFor(s,multi);
+      let sh;
+      if(im){try{sh=await LEG.svgShapes(im.svg,{h:bx.size*1.3*(+im.scale||1),maxW:bx.maxW,cx:bx.cx,cy:bx.cy,mode:im.mode});}catch(e){dropped.push(im.name);continue;}
+        if(!sh.length){dropped.push(im.name+"（印字する部分がありません）");continue;}}
+      else sh=await LEG.textShapes(t,{font:LCFG.font,weight:LCFG.weight,size:bx.size,maxW:bx.maxW,cx:bx.cx,cy:bx.cy});
       const pr=plateauRect(P,D);const outside=loopsOf(sh).some(l=>l.some(p=>sdRR(p[0],p[1],pr.size,pr.r)>-0.1));
-      if(outside||shapesOverlap(sh,shapes)){dropped.push(t);continue;}
-      shapes.push(...sh);}
-    r={shapes,dropped};if(shapeCache.size>300)shapeCache.clear();shapeCache.set(key,r);
+      if(outside||shapesOverlap(sh,shapes)){dropped.push(im?im.name:t);continue;}
+      shapes.push(...sh);addGroup(s.layer,sh);}
+    // layer-key marks, coloured (grouped) by the layer they switch to
+    const pr=plateauRect(P,D);
+    markCentres(marks.length).forEach(([cx,cy],i)=>{const sh=[markOutline(LCFG.markShape,LCFG.markSize,cx,cy)];
+      if(loopsOf(sh).some(l=>l.some(p=>sdRR(p[0],p[1],pr.size,pr.r)>-0.1))||shapesOverlap(sh,shapes)){dropped.push("マーク（"+((KM.layers[marks[i]]&&KM.layers[marks[i]].name)||("L"+marks[i]))+"）");return;}
+      shapes.push(...sh);addGroup(marks[i],sh);});
+    r={shapes,dropped,groups};if(shapeCache.size>300)shapeCache.clear();shapeCache.set(key,r);
   }
   return r;
 }
 function shiftT(T,offx){return offx?T.map(t=>[[t[0][0]+offx,t[0][1],t[0][2]],[t[1][0]+offx,t[1][1],t[1][2]],[t[2][0]+offx,t[2][1],t[2][2]],t[3]]):T;}
 // body (with pockets when engraved) and the legend part (inlay filling the pocket, or raised letters)
+// legendBy: the legend split by keymap layer ([{layer, tris}]), for per-layer filaments
 async function legendParts(pos,offx,N,M){
-  const {shapes,dropped}=await legendShapes(pos),Q=paramsFor(pos);
-  if(!shapes.length)return{body:buildMesh(Q,N,M,offx),legend:[],dropped};
-  if(LCFG.style==="engrave"){
-    const body=buildMesh(Q,N,M,offx,{shapes,depth:LCFG.depth});
-    const legend=shiftT(LEG.extrude(shapes,(x,y)=>zTop(x,y)-LCFG.depth,(x,y)=>zTop(x,y),3),offx);
-    return{body,legend,dropped};
-  }
-  const legend=shiftT(LEG.extrude(shapes,(x,y)=>zTop(x,y)-LCFG.embed,(x,y)=>zTop(x,y)+LCFG.height,3),offx);
-  return{body:buildMesh(Q,N,M,offx),legend,dropped};
+  const {shapes,dropped,groups}=await legendShapes(pos),Q=paramsFor(pos);
+  if(!shapes.length)return{body:buildMesh(Q,N,M,offx),legend:[],legendBy:[],dropped};
+  const eng=LCFG.style==="engrave";
+  const zb=eng?(x,y)=>zTop(x,y)-LCFG.depth:(x,y)=>zTop(x,y)-LCFG.embed,zt=eng?(x,y)=>zTop(x,y):(x,y)=>zTop(x,y)+LCFG.height;
+  const legendBy=groups.map(g=>({layer:g.layer,tris:shiftT(LEG.extrude(g.shapes,zb,zt,3),offx)}));
+  const legend=[].concat(...legendBy.map(g=>g.tris));
+  const body=eng?buildMesh(Q,N,M,offx,{shapes,depth:LCFG.depth}):buildMesh(Q,N,M,offx);
+  return{body,legend,legendBy,dropped};
 }
 // does the homing bump touch any legend of this key?
 function homingHitsLegend(shapes){
@@ -145,7 +213,7 @@ function setKeymap(d,src){
   for(const k in KEYCFG){if(+k>=KM.keys.length)delete KEYCFG[k];}
   for(const k in KEYHOME){if(+k>=KM.keys.length)delete KEYHOME[k];}
   if(P.homing&&!Object.keys(KEYHOME).length)fjKeys().forEach(i=>KEYHOME[i]=true);   // bump already switched on: start with F and J
-  shapeCache.clear();renderKm();saveWs();update();
+  shapeCache.clear();renderKm();buildExportForm();saveWs();update();
 }
 async function connect(kind){
   if(client){try{await client.close();}catch(_){}client=null;}
@@ -246,7 +314,7 @@ async function withRetry(fn,label){
   catch(e){if(e&&e.code==="timeout"){kmLog(label+"の応答がないため再要求");return await fn();}throw e;}
 }
 function exportKeymapJson(){
-  const data={format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number)};
+  const data={format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number),svgs:SVGS};
   const name="keymap_"+(KM.device||"keyboard").replace(/[^A-Za-z0-9_-]+/g,"_")+".json";
   saveFile(new Blob([JSON.stringify(data)],{type:"application/json"}),name,"km-status");
 }
@@ -255,6 +323,7 @@ function applyLakKeymap(d){
   if(d.legendConfig)LCFG={...LDEF,...d.legendConfig};
   KEYCFG=d.keyConfig&&typeof d.keyConfig==="object"?d.keyConfig:{};
   KEYHOME={};if(Array.isArray(d.homingKeys))d.homingKeys.forEach(i=>{if(Number.isInteger(i)&&i>=0)KEYHOME[i]=true;});
+  if(d.svgs&&typeof d.svgs==="object"){SVGS={...SVGS,...d.svgs};svgImgs.clear();}
   setKeymap(d,"file");buildLegendForm();kmStatus("ファイルから読み込みました（"+d.layers.length+"レイヤー / "+d.keys.length+"キー）。");
 }
 // keymap files: this app's keymap.json, Vial .vil, and keyboard definitions (vial.json / VIA JSON)
@@ -323,11 +392,20 @@ function drawMap(){
     const k=KM.keys[i],ang=(k.r||0)/100*Math.PI/180;
     ctx2.save();ctx2.translate(ox+cx*sc,oy+cy*sc);ctx2.rotate(ang);
     const slots=slotsOf(i);ctx2.textAlign="center";ctx2.textBaseline="middle";
-    for(const s of slots){const t=slotText(s,i);if(!t)continue;const fs=(s.at==="c"?0.3:0.19)*sc;
+    for(const s of slots){
+      if(s.svg&&SVGS[s.svg]){const im=svgImg(s.svg),off={c:[0,0],t:[0,-.3],b:[0,.3],tl:[-.22,-.3],tr:[.22,-.3],bl:[-.22,.3],br:[.22,.3]}[s.at]||[0,0],mm=sc/Math.max(P.pitch,1);
+        const bh=(s.at==="c"?0.36:0.2)*sc,x=off[0]*sc+(+s.dx||0)*mm,y=off[1]*sc-(+s.dy||0)*mm;
+        if(im){const a=im.width/im.height,w=a>=1?bh:bh*a,h=a>=1?bh/a:bh;ctx2.save();if(on)ctx2.filter="invert(1)";ctx2.drawImage(im,x-w/2,y-h/2,w,h);ctx2.restore();}
+        else{ctx2.font=`600 ${Math.max(7,0.16*sc)}px system-ui,sans-serif`;ctx2.fillStyle=on?css("--accent-ink"):muted;ctx2.fillText("SVG",x,y);}
+        continue;}
+      const t=slotShown(s,i);if(!t)continue;const fs=(s.at==="c"?0.3:0.19)*sc;
       ctx2.font=`600 ${Math.max(7,fs)}px "IBM Plex Sans JP",system-ui,sans-serif`;ctx2.fillStyle=on?css("--accent-ink"):(s.at==="c"?ink:muted);
       const off={c:[0,0],t:[0,-.3],b:[0,.3],tl:[-.22,-.3],tr:[.22,-.3],bl:[-.22,.3],br:[.22,.3]}[s.at]||[0,0];
       let tx=t;while(ctx2.measureText(tx).width>0.86*sc&&tx.length>1)tx=tx.slice(0,-1);
       const mm=sc/Math.max(P.pitch,1);ctx2.fillText(tx,off[0]*sc+(+s.dx||0)*mm,off[1]*sc-(+s.dy||0)*mm);}
+    const mk=keyMarks(i),lm=legendMatFn();
+    mk.forEach((t,j)=>{ctx2.fillStyle=lm?"rgb("+COLS[lm(t)].join(",")+")":(on?css("--accent-ink"):ink);ctx2.beginPath();
+      ctx2.arc((-0.33+j*0.13)*sc,-0.33*sc,Math.max(2,sc*0.05),0,2*Math.PI);ctx2.fill();});
     if(P.homing&&KEYHOME[i]){ctx2.strokeStyle=on?css("--accent-ink"):ink;ctx2.lineWidth=Math.max(1.5,sc*0.04);ctx2.lineCap="round";
       ctx2.beginPath();ctx2.moveTo(-0.14*sc,0.36*sc);ctx2.lineTo(0.14*sc,0.36*sc);ctx2.stroke();}
     ctx2.restore();
@@ -348,6 +426,13 @@ function renderEditor(){
   head.textContent=ids.length===0?"キーを選ぶと、表示するレイヤーを設定できます。":ids.length===1?"キー "+(ids[0]+1)+" に表示するレイヤー":ids.length+"キーをまとめて設定中";
   box.appendChild(head);
   if(!ids.length)return;
+  const hasSvg=Object.keys(SVGS).length>0;
+  // select of library images; withText: first option keeps the text
+  const svgSelect=(withText,states,disabled,label)=>{const sv=document.createElement("select");sv.className="km-svgsel";sv.setAttribute("aria-label",label);
+    if(withText){const o=document.createElement("option");o.value="";o.textContent="文字を印字";sv.appendChild(o);}
+    for(const id in SVGS){const o=document.createElement("option");o.value=id;o.textContent="画像: "+SVGS[id].name;sv.appendChild(o);}
+    const vals=states.filter(Boolean).map(x=>x.svg&&SVGS[x.svg]?x.svg:"");sv.value=vals.length&&vals.every(v=>v===vals[0])?vals[0]:(withText?"":Object.keys(SVGS)[0]);
+    sv.disabled=disabled;return sv;};
   KM.layers.forEach((L,li)=>{
     const states=ids.map(p=>slotsOf(p).find(s=>s.layer===li));
     const onCount=states.filter(Boolean).length;
@@ -367,15 +452,37 @@ function renderEditor(){
     row.appendChild(lab);row.appendChild(at);
     if(ids.length===1){
       const s=states[0];const auto=autoLabel(li,ids[0]);
-      const tx=document.createElement("input");tx.className="km-text";tx.placeholder=auto||"（空）";tx.value=s&&s.text?s.text:"";tx.disabled=!s;tx.maxLength=12;
+      const tx=document.createElement("input");tx.className="km-text";tx.placeholder=auto||"（空）";tx.value=s&&s.text?s.text:"";tx.disabled=!s||!!(s.svg&&SVGS[s.svg]);tx.maxLength=12;
       tx.setAttribute("aria-label",(L.name||"Layer")+"の文字（空欄で自動）");
       tx.onchange=()=>{KEYCFG[ids[0]]=slotsOf(ids[0]).map(x=>x.layer===li?{...x,text:tx.value||undefined}:{...x});kmChanged(false);};
       row.appendChild(tx);
     }
+    if(hasSvg){const sv=svgSelect(true,states,onCount===0,(L.name||"Layer "+li)+"の画像");
+      sv.onchange=()=>{ids.forEach(p=>{KEYCFG[p]=slotsOf(p).map(x=>x.layer===li?{...x,svg:sv.value||undefined,auto:undefined}:{...x});});kmChanged();};row.appendChild(sv);}
     box.appendChild(row);
   });
+  // image-only slot (layer -1): a logo next to the legends
+  if(hasSvg){
+    const states=ids.map(p=>slotsOf(p).find(s=>s.layer===-1)),onCount=states.filter(Boolean).length;
+    const row=document.createElement("div");row.className="km-lrow";
+    const lab=document.createElement("label");lab.className="km-lname";
+    const cb=document.createElement("input");cb.type="checkbox";cb.checked=onCount===ids.length;cb.indeterminate=onCount>0&&onCount<ids.length;
+    lab.appendChild(cb);lab.appendChild(document.createTextNode(" 画像を追加（ロゴなど）"));
+    const at=document.createElement("select");at.setAttribute("aria-label","画像の位置");
+    AT.forEach(([v,t])=>{const o=document.createElement("option");o.value=v;o.textContent=t;at.appendChild(o);});
+    const first=states.find(Boolean);at.value=first?first.at:"c";at.disabled=onCount===0;
+    const sv=svgSelect(false,states,onCount===0,"追加する画像");
+    cb.onchange=()=>{const id=sv.value||Object.keys(SVGS)[0];ids.forEach(p=>{let s=slotsOf(p).map(x=>({...x}));
+        if(cb.checked){if(!s.find(x=>x.layer===-1)){const used=new Set(s.map(x=>x.at));const free=["c","tr","br","tl","bl","t","b"].find(a=>!used.has(a))||"tr";s.push({layer:-1,at:free,svg:id});}}
+        else s=s.filter(x=>x.layer!==-1);
+        KEYCFG[p]=s;});kmChanged();};
+    at.onchange=()=>{ids.forEach(p=>{KEYCFG[p]=slotsOf(p).map(x=>x.layer===-1?{...x,at:at.value}:{...x});});kmChanged();};
+    sv.onchange=()=>{ids.forEach(p=>{KEYCFG[p]=slotsOf(p).map(x=>x.layer===-1?{...x,svg:sv.value}:{...x});});kmChanged();};
+    row.appendChild(lab);row.appendChild(at);row.appendChild(sv);box.appendChild(row);
+  }
   const hint=document.createElement("p");hint.className="hint";hint.style.padding="6px 0 0";
-  hint.textContent=ids.length===1?"文字欄を空にすると、キーマップから自動で決まる文字になります。":"複数キーの文字の上書きは、1キーずつ選んで行ってください。";
+  hint.textContent=(ids.length===1?"文字欄を空にすると、キーマップから自動で決まる文字になります。":"複数キーの文字の上書きは、1キーずつ選んで行ってください。")+
+    (Object.keys(SVGS).length?"":"「Legendの文字設定」でSVG画像を追加すると、文字の代わりやロゴとして印字できます。");
   box.appendChild(hint);
   renderFine(box,ids);
   renderHomingKeys(box,ids);
@@ -409,7 +516,7 @@ function renderFine(box,ids){
   const head=document.createElement("div");head.className="km-edhead";head.textContent="位置の微調整";wrap.appendChild(head);
   const row1=document.createElement("div");row1.className="km-finerow";
   const sel2=document.createElement("select");sel2.setAttribute("aria-label","微調整するレイヤー");
-  layersOn.forEach(li=>{const o=document.createElement("option");o.value=li;o.textContent=(KM.layers[li]&&KM.layers[li].name)||("Layer "+li);sel2.appendChild(o);});
+  layersOn.forEach(li=>{const o=document.createElement("option");o.value=li;o.textContent=layerName(li);sel2.appendChild(o);});
   sel2.value=fineLayer;sel2.onchange=()=>{fineLayer=+sel2.value;renderEditor();};
   row1.appendChild(sel2);
   const targets=()=>ids.filter(p=>slotsOf(p).some(s=>s.layer===fineLayer));
@@ -436,7 +543,7 @@ function renderFine(box,ids){
   n.textContent=ids.length>1?"矢印は選択中の各キーを今の位置から動かします。数値を入れると全キーが同じ位置になります。":"0.1mm単位で動かせます。天面からはみ出す位置にすると、そのLegendは省かれます。";
   wrap.appendChild(n);box.appendChild(wrap);
 }
-function kmChanged(rerenderEditor=true){drawMap();if(rerenderEditor)renderEditor();saveWs();rebuildPreview();}
+function kmChanged(rerenderEditor=true){drawMap();if(rerenderEditor)renderEditor();if(EXP.format==="3mf"&&EXP.legendMode==="layer")buildExportForm();saveWs();rebuildPreview();}
 function renderKmButtons(){
   const loaded=KM.layers.length>0;
   document.getElementById("km-loaded").hidden=!loaded;
@@ -497,7 +604,7 @@ function buildLegendForm(){
   segRow("ホストPCのキー配列（記号の表示）","host",[["JIS（日本語）","jis"],["US","us"]]);
   buildFontRow(box);
   segRow("太さ","weight",[["標準",500],["太字",700]]);
-  LFIELDS.forEach(it=>{
+  const numRow=it=>{
     const r=document.createElement("div");r.className="row";r.style.gridTemplateColumns="minmax(0,1fr) 76px";
     const id="l-"+it.k;const lab=document.createElement("label");lab.htmlFor=id;lab.textContent=it.label+"（mm）";
     if(it.hint){const sm=document.createElement("small");sm.textContent=it.hint;lab.appendChild(sm);}
@@ -507,7 +614,99 @@ function buildLegendForm(){
     rng.oninput=()=>{LCFG[it.k]=parseFloat(rng.value);num.value=fmt(LCFG[it.k]);drawMap();apply();};
     num.onchange=()=>{let v=parseFloat(num.value);if(isNaN(v))v=LCFG[it.k];v=Math.min(it.max,Math.max(it.min,v));LCFG[it.k]=v;num.value=fmt(v);rng.value=v;apply();};
     r.appendChild(lab);r.appendChild(num);r.appendChild(rng);if(it.dep&&!it.dep())r.style.display="none";box.appendChild(r);
-  });
+  };
+  LFIELDS.forEach(numRow);
+  // --- marks on layer keys ---
+  const mh=document.createElement("div");mh.className="km-edhead";mh.style.cssText="padding:14px 0 2px;border-top:1px solid var(--line);margin-top:6px";mh.textContent="レイヤーキーのマーク";box.appendChild(mh);
+  const chk=(label,key,rebuild)=>{const l=document.createElement("label");l.className="km-lname";l.style.padding="6px 0";const c=document.createElement("input");c.type="checkbox";c.checked=!!LCFG[key];
+    c.onchange=()=>{LCFG[key]=c.checked;shapeCache.clear();if(rebuild)buildLegendForm();if(EXP.format==="3mf"&&EXP.legendMode==="layer")buildExportForm();kmChanged(false);};
+    l.appendChild(c);l.appendChild(document.createTextNode(" "+label));box.appendChild(l);};
+  chk("レイヤーキーにマークを付ける","mark",true);
+  const mhint=document.createElement("p");mhint.className="hint";mhint.style.padding="0 0 6px";
+  mhint.textContent="MO・TG・TOなどのレイヤーキーと、ベースレイヤーのLayer-Tapに、切り替え先のレイヤーを表すマークを付けます。3MFで「レイヤーごとに色分け」にすると、マークは切り替え先レイヤーの色（フィラメント）になります。";
+  box.appendChild(mhint);
+  if(LCFG.mark){
+    segRow("マークの形","markShape",[["丸","dot"],["四角","square"],["三角","tri"],["バー","bar"]]);
+    segRow("マークの位置","markAt",[["左上","tl"],["上","t"],["右上","tr"],["左下","bl"],["下","b"],["右下","br"]]);
+    numRow({k:"markSize",label:"マークの大きさ",hint:"バーは長さがこの約2倍になります",min:0.8,max:4,step:0.1});
+    chk("レイヤー切り替えだけのキーは文字を省く（マークだけにする）","markOnly",false);
+  }
+  buildSvgLibrary(box);
+}
+// --- SVG image library ---
+let iconGalleryOpen=false;
+function addIcon(ic){if(!SVGS[ic.id])SVGS[ic.id]={name:ic.name,svg:ic.svg,mode:"dark",scale:1};}
+function removeSvg(id){delete SVGS[id];svgImgs.delete(id);
+  for(const p in KEYCFG)KEYCFG[p]=KEYCFG[p].filter(x=>!(x.layer===-1&&x.svg===id)).map(x=>x.svg===id?{...x,svg:undefined,auto:undefined}:x);}
+// replace key labels (Shift, Enter, arrows, volume ...) with built-in icons; marked auto so they can be reverted
+function iconizeLabels(){
+  let n=0;
+  KM.keys.forEach((_,p)=>{let ch=false;const slots=slotsOf(p).map(x=>({...x}));
+    for(const sl of slots){if(sl.layer<0||sl.svg||sl.text)continue;const ic=ICONS.forLabel(slotShown(sl,p));if(!ic)continue;addIcon(ic);sl.svg=ic.id;sl.auto=true;ch=true;n++;}
+    if(ch)KEYCFG[p]=slots;});
+  return n;
+}
+function uniconizeLabels(){let n=0;for(const p in KEYCFG)KEYCFG[p]=KEYCFG[p].map(x=>{if(x.auto&&x.svg){n++;return{...x,svg:undefined,auto:undefined};}return x;});return n;}
+function buildSvgLibrary(box){
+  const h=document.createElement("div");h.className="km-edhead";h.style.cssText="padding:14px 0 2px;border-top:1px solid var(--line);margin-top:6px";h.textContent="SVG画像（ロゴ・アイコン）";box.appendChild(h);
+  const hint=document.createElement("p");hint.className="hint";hint.style.padding="0 0 6px";
+  hint.textContent="追加した画像は、キーの設定欄で文字の代わりに、またはロゴとして文字と並べて印字できます。大きさは文字の大きさに合わせて決まり、倍率で調整できます。";
+  box.appendChild(hint);
+  const list=document.createElement("div");list.className="km-svglist";
+  for(const id in SVGS){const it=SVGS[id];
+    const row=document.createElement("div");row.className="km-svgrow";
+    const th=document.createElement("div");th.className="km-svgthumb";LEG.svgThumb(it.svg,64).then(im=>{im.alt="";th.appendChild(im);}).catch(()=>{th.textContent="?";});
+    const nm=document.createElement("input");nm.value=it.name;nm.maxLength=30;nm.setAttribute("aria-label","画像の名前");
+    nm.onchange=()=>{it.name=nm.value.trim()||it.name;nm.value=it.name;saveWs();renderEditor();};
+    const del=document.createElement("button");del.type="button";del.className="ghost";del.textContent="削除";
+    del.onclick=()=>{removeSvg(id);shapeCache.clear();buildLegendForm();kmChanged();};
+    const md=document.createElement("select");md.setAttribute("aria-label","印字する部分");
+    [["濃い色の部分を印字","dark"],["描かれた部分すべてを印字","all"]].forEach(([t,v])=>{const o=document.createElement("option");o.value=v;o.textContent=t;md.appendChild(o);});
+    md.value=it.mode||"dark";md.onchange=()=>{it.mode=md.value;shapeCache.clear();kmChanged(false);};
+    const sc=document.createElement("label");sc.className="km-svgscale";sc.textContent="倍率";
+    const si=document.createElement("input");si.type="number";si.min=0.3;si.max=3;si.step=0.05;si.value=+it.scale||1;si.inputMode="decimal";
+    si.onchange=()=>{let v=parseFloat(si.value);if(isNaN(v))v=+it.scale||1;v=Math.min(3,Math.max(0.3,v));it.scale=v;si.value=v;shapeCache.clear();kmChanged(false);};
+    sc.appendChild(si);
+    row.appendChild(th);row.appendChild(nm);row.appendChild(del);row.appendChild(md);row.appendChild(sc);list.appendChild(row);}
+  box.appendChild(list);
+  const setNote=t=>{const nn=box.querySelector(".km-svgnote");if(nn)nn.textContent=t;};
+  // built-in icons
+  const ib=document.createElement("div");ib.className="km-btns";ib.style.marginTop="8px";
+  const gb=document.createElement("button");gb.type="button";gb.textContent=iconGalleryOpen?"おすすめの画像を閉じる":"おすすめの画像から選ぶ";gb.setAttribute("aria-expanded",String(iconGalleryOpen));
+  gb.onclick=()=>{iconGalleryOpen=!iconGalleryOpen;buildLegendForm();};
+  const ab=document.createElement("button");ab.type="button";ab.className="ghost";ab.textContent="キーの文字をアイコンに置き換える";
+  ab.onclick=()=>{const n=iconizeLabels();shapeCache.clear();buildLegendForm();kmChanged();
+    setNote(n?n+"か所の文字（Shift・Enter・矢印・音量など）をアイコンに置き換えました。「置き換えを元に戻す」で文字に戻せます。":"アイコンに置き換えられる文字がありませんでした（Shift・Enter・Bksp・Tab・矢印・音量などが対象です）。");};
+  const ub=document.createElement("button");ub.type="button";ub.className="ghost";ub.textContent="置き換えを元に戻す";
+  ub.onclick=()=>{const n=uniconizeLabels();shapeCache.clear();buildLegendForm();kmChanged();setNote(n?n+"か所を文字に戻しました。":"元に戻すものはありません。");};
+  ib.appendChild(gb);ib.appendChild(ab);ib.appendChild(ub);box.appendChild(ib);
+  if(iconGalleryOpen){
+    const gh=document.createElement("p");gh.className="hint";gh.style.padding="6px 0 4px";gh.textContent="押すと画像の一覧に追加されます（もう一度押すと外します）。追加した画像は、キーの設定欄で選べます。";box.appendChild(gh);
+    const grid=document.createElement("div");grid.className="km-icongrid";
+    for(const ic of ICONS.list){const b=document.createElement("button");b.type="button";b.setAttribute("aria-pressed",String(!!SVGS[ic.id]));b.title=ic.name;
+      const th=document.createElement("span");th.className="km-iconimg";LEG.svgThumb(ic.svg,48).then(im=>{im.alt="";th.appendChild(im);}).catch(()=>{});
+      const nm=document.createElement("span");nm.className="km-iconname";nm.textContent=ic.name;
+      b.appendChild(th);b.appendChild(nm);
+      b.onclick=()=>{if(SVGS[ic.id])removeSvg(ic.id);else addIcon(ic);shapeCache.clear();buildLegendForm();kmChanged();};
+      grid.appendChild(b);}
+    box.appendChild(grid);
+  }
+  const note=document.createElement("p");note.className="hint";note.style.padding="4px 0 0";
+  const fi=document.createElement("input");fi.type="file";fi.accept=".svg,image/svg+xml";fi.multiple=true;fi.hidden=true;
+  const add=document.createElement("div");add.className="km-btns";add.style.margin="6px 0 10px";
+  const b=document.createElement("button");b.type="button";b.textContent="SVGを追加…";b.onclick=()=>fi.click();add.appendChild(b);
+  fi.onchange=async()=>{const files=[...(fi.files||[])];fi.value="";const bad=[];let n=0;
+    for(const f of files){try{let t=await f.text();
+        t=t.replace(/<\?xml[^>]*>/g,"").replace(/<!--[\s\S]*?-->/g,"").replace(/<metadata[\s\S]*?<\/metadata>/gi,"").replace(/>\s+</g,"><").trim();
+        if(t.length>300000)throw new Error("大きすぎます（300KBまで）");
+        LEG.svgPrepare(t);await LEG.svgThumb(t,32);
+        const id="s"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+        SVGS[id]={name:f.name.replace(/\.svg$/i,"").slice(0,30)||"画像",svg:t,mode:"dark",scale:1};n++;}
+      catch(e){bad.push(f.name+"（"+(e&&e.message||"読めません")+"）");}}
+    buildLegendForm();renderEditor();saveWs();
+    const nn=box.querySelector(".km-svgnote");if(nn)nn.textContent=(n?n+"個の画像を追加しました。キーを選んで、設定欄で画像を選んでください。":"")+(bad.length?" 追加できなかったファイル: "+bad.join("、"):"");};
+  add.appendChild(fi);box.appendChild(add);
+  note.className="hint km-svgnote";box.appendChild(note);
 }
 
 // --- export all keys ---
@@ -532,11 +731,11 @@ async function exportLegendKeys(onlySel){
       files.push({name:"keys/"+nm+".stl",data:toSTL(keyT)});
       if(parts.legend.length)files.push({name:(LCFG.style==="engrave"?"inlay/":"legends/")+nm+"_legend.stl",data:toSTL(parts.legend)});
       const multi=slotsOf(pos).length>1;
-      scadRows.push("    [ // "+(pos+1)+"\n"+slotsOf(pos).map(s=>{const t=slotText(s,pos);if(!t)return null;const b=slotBoxFor(s,multi);
+      scadRows.push("    [ // "+(pos+1)+"\n"+slotsOf(pos).map(s=>{if(s.svg&&SVGS[s.svg])return null;const t=slotShown(s,pos);if(!t)return null;const b=slotBoxFor(s,multi);
         return "      ["+JSON.stringify(t)+", "+fmt(b.cx)+", "+fmt(b.cy)+", "+fmt(b.size)+"]";}).filter(Boolean).join(",\n")+"\n    ]");
     }
     files.push({name:"engraved.scad",data:new TextEncoder().encode(engraveScad(scadRows,list))});
-    files.push({name:"keymap.json",data:new TextEncoder().encode(JSON.stringify({format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number)}))});
+    files.push({name:"keymap.json",data:new TextEncoder().encode(JSON.stringify({format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number),svgs:SVGS}))});
     st.textContent="ZIPにまとめています…";await new Promise(r=>setTimeout(r,0));
     const zip=await makeZipAsync(files);
     const tag=(KM.device||"keyboard").replace(/[^A-Za-z0-9_-]+/g,"_").slice(0,30)||"keyboard";
@@ -554,8 +753,11 @@ async function export3MF(list,st){
     const parts=await legendParts(k,0,q[0],q[1]);
     if(parts.dropped.length)warns.push((k+1)+"番: "+parts.dropped.join(", "));
     const main=slotsOf(k).map(s=>slotText(s,k)).find(Boolean)||"";
+    const lp=EXP.legendMode==="layer"
+      ?parts.legendBy.map(g=>({name:"legend_"+(g.layer<0?"image":((KM.layers[g.layer]&&KM.layers[g.layer].name)||("L"+g.layer))),tris:g.tris,extruder:layerExt(g.layer)}))
+      :[{name:"legend",tris:parts.legend,extruder:EXP.legendExt}];
     items.push({name:String(k+1).padStart(2,"0")+"_"+(main||"key"),x:pos[n][0],y:pos[n][1],
-      parts:[{name:"body",tris:parts.body,extruder:EXP.bodyExt},{name:"legend",tris:parts.legend,extruder:EXP.legendExt}]});
+      parts:[{name:"body",tris:parts.body,extruder:EXP.bodyExt},...lp]});
   }
   st.textContent="3MFにまとめています…";await new Promise(r=>setTimeout(r,0));
   const blob=await build3MF(items);
@@ -576,16 +778,40 @@ function buildExportForm(){
   box.appendChild(w);
   const note=document.createElement("p");note.className="hint";note.style.padding="0 0 6px";
   if(EXP.format==="3mf"){
-    note.textContent="選んだキーをプレートに並べた1ファイルにします。各キーは「本体＋Legend」の2パーツのオブジェクトで、フィラメント番号も設定済みです。"+(BUILD==="claude"?"この表示では3MFをZIPに入れて保存します。":"");
+    const perL=EXP.legendMode==="layer";
+    note.textContent="選んだキーをプレートに並べた1ファイルにします。各キーは「本体＋Legend」"+(perL?"（レイヤーごと）":"")+"のパーツでできたオブジェクトで、フィラメント番号も設定済みです。"+(BUILD==="claude"?"この表示では3MFをZIPに入れて保存します。":"");
     box.appendChild(note);
+    const changed=()=>{saveWs();if(perL)rebuildPreview();};
     const g=document.createElement("div");g.className="km-exgrid";
     const num=(label,key,min,max)=>{const l=document.createElement("label");l.textContent=label;const i=document.createElement("input");i.type="number";i.min=min;i.max=max;i.value=EXP[key];i.inputMode="numeric";
-      i.onchange=()=>{let v=parseInt(i.value,10);if(isNaN(v))v=EXP[key];v=Math.min(max,Math.max(min,v));EXP[key]=v;i.value=v;saveWs();};l.appendChild(i);g.appendChild(l);};
-    num("本体のフィラメント","bodyExt",1,16);num("Legendのフィラメント","legendExt",1,16);
+      i.onchange=()=>{let v=parseInt(i.value,10);if(isNaN(v))v=EXP[key];v=Math.min(max,Math.max(min,v));EXP[key]=v;i.value=v;if(perL)buildExportForm();changed();};l.appendChild(i);g.appendChild(l);};
+    num("本体のフィラメント","bodyExt",1,16);if(!perL)num("Legendのフィラメント","legendExt",1,16);
     const l=document.createElement("label");l.textContent="プレート";const s=document.createElement("select");
     [["256mm（X1/P1/A1）",256],["180mm（A1 mini）",180]].forEach(([t,v])=>{const o=document.createElement("option");o.value=v;o.textContent=t;s.appendChild(o);});
     s.value=EXP.plate;s.onchange=()=>{EXP.plate=+s.value;saveWs();};l.appendChild(s);g.appendChild(l);
     box.appendChild(g);
+    // legend colours: one filament, or one per keymap layer
+    const m=document.createElement("div");m.className="seg";
+    const mh=document.createElement("div");mh.className="seghead";mh.textContent="Legendの色分け";m.appendChild(mh);
+    [["すべて同じ色","one"],["レイヤーごとに色分け","layer"]].forEach(([t,v])=>{const b=document.createElement("button");b.type="button";b.textContent=t;
+      b.setAttribute("aria-pressed",String(EXP.legendMode===v));b.onclick=()=>{EXP.legendMode=v;buildExportForm();saveWs();rebuildPreview();};m.appendChild(b);});
+    box.appendChild(m);
+    if(perL){
+      const used=usedLayers();
+      const lg=document.createElement("div");lg.className="km-extable";
+      if(!used.length){const e=document.createElement("p");e.className="hint";e.textContent="Legendを表示しているレイヤーがありません。";lg.appendChild(e);}
+      used.forEach(li=>{
+        const row=document.createElement("label");row.className="km-exrow";
+        const sw=document.createElement("span");sw.className="km-swatch";const c=COLS[extMat(layerExt(li))];sw.style.background="rgb("+c.join(",")+")";
+        const nm=document.createElement("span");nm.textContent=li<0?"画像（ロゴなど）":layerName(li);
+        const i=document.createElement("input");i.type="number";i.min=1;i.max=16;i.value=layerExt(li);i.inputMode="numeric";i.setAttribute("aria-label",nm.textContent+"のフィラメント");
+        i.onchange=()=>{let v=parseInt(i.value,10);if(isNaN(v))v=layerExt(li);v=Math.min(16,Math.max(1,v));EXP.layerExt={...EXP.layerExt,[li]:v};buildExportForm();changed();};
+        row.appendChild(sw);row.appendChild(nm);row.appendChild(i);lg.appendChild(row);});
+      box.appendChild(lg);
+      const h2=document.createElement("p");h2.className="hint";h2.style.padding="4px 0 6px";
+      h2.textContent="数字はスライサーのフィラメント番号です。プレビューのLegendは、フィラメント番号ごとに色を変えて表示しています（実際の色はスライサーで設定した色になります）。同じ番号にしたレイヤーは同じ色で印刷されます。";
+      box.appendChild(h2);
+    }
   }else{
     note.textContent="キーごとのSTL（Legendを彫り込んだ本体）、2色印刷用のはめ込みLegend、刻印用のOpenSCADをZIPにまとめます。";box.appendChild(note);
   }
@@ -595,7 +821,7 @@ function engraveScad(rows,list){
   const body=scadText().replace(/\nhoming      = (true|false);/,"\nhoming      = len([for (h = homing_keys) if (h == key) h]) > 0;   // キーごとの設定（homing_keys）\nhoming_keys = ["+hk.join(", ")+"];")
     .replace(/\nkeycap\(\);\s*$/,"\n");
   return body+`
-// ===== Legend 刻印版 =====
+// ===== Legend 刻印版 =====${Object.keys(SVGS).length?"\n// SVG画像のLegendはこのファイルには入りません（STL / 3MFを使ってください）":""}${LCFG.mark?"\n// レイヤーキーのマークはこのファイルには入りません（STL / 3MFを使ってください）":""}
 // key を変えて1キーずつ出力します（keys/ フォルダの番号と対応）
 key = 0;              // 0 = ${list[0]+1}番のキー
 engrave_depth = ${fmt(LCFG.depth)};
@@ -618,7 +844,7 @@ difference() {
 let wsTimer=0;
 function saveWs(){clearTimeout(wsTimer);wsTimer=setTimeout(async()=>{
   if(!KM.layers.length)return;
-  const doc={km:{device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,source:KM.source},lcfg:LCFG,keycfg:KEYCFG,home:Object.keys(KEYHOME).map(Number),exp:EXP,updatedAt:Date.now()};
+  const doc={km:{device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,source:KM.source},lcfg:LCFG,keycfg:KEYCFG,home:Object.keys(KEYHOME).map(Number),exp:EXP,svgs:SVGS,updatedAt:Date.now()};
   try{if(Store.mode==="db")await Store.db.doc("data/users/"+Store.uid+"/lib").collection("ws").doc("current").set(doc);
     else if(Store.mode==="local")localStorage.setItem(LS+"ws",JSON.stringify(doc));}catch(_){}
 },1200);}
@@ -627,7 +853,7 @@ async function loadWs(){
   try{if(Store.mode==="db"){const s=await Store.db.doc("data/users/"+Store.uid+"/lib").collection("ws").doc("current").get();if(s.exists)doc=s.data();}
     else if(Store.mode==="local"){doc=JSON.parse(localStorage.getItem(LS+"ws")||"null");}}catch(_){}
   if(doc&&doc.km&&Array.isArray(doc.km.layers)&&doc.km.layers.length){
-    LCFG={...LDEF,...(doc.lcfg||{})};KEYCFG=JSON.parse(JSON.stringify(doc.keycfg||{}));KEYHOME={};if(Array.isArray(doc.home))doc.home.forEach(i=>{if(Number.isInteger(i)&&i>=0)KEYHOME[i]=true;});EXP={...EDEF,...(doc.exp||{})};buildExportForm();
+    LCFG={...LDEF,...(doc.lcfg||{})};KEYCFG=JSON.parse(JSON.stringify(doc.keycfg||{}));KEYHOME={};if(Array.isArray(doc.home))doc.home.forEach(i=>{if(Number.isInteger(i)&&i>=0)KEYHOME[i]=true;});EXP={...EDEF,...(doc.exp||{})};SVGS=doc.svgs&&typeof doc.svgs==="object"?doc.svgs:{};svgImgs.clear();buildExportForm();
     KM.device=doc.km.device||"";KM.layers=doc.km.layers;KM.behaviors=doc.km.behaviors||{};KM.keys=doc.km.keys||[];KM.source=doc.km.source||"";
     sel.clear();curKey=KM.keys.length?0:null;if(curKey!==null)sel.add(0);
     buildLegendForm();renderKm();kmStatus("前回のキーマップ（"+(KM.device||"キーボード")+"）を復元しました。");rebuildPreview();

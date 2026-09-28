@@ -197,5 +197,40 @@ const LEG=(()=>{
     const mm=loops.map(l=>dedupe(rdpClosed(l.map(([x,y])=>[(x-ox)*s+o.cx,(y-oy)*s+o.cy]),0.012))).filter(l=>l.length>=3);
     return group(mm,0.004);
   }
-  return{contours,group,triangulate,extrude,textShapes,area,rdpClosed,PX};
+  // --- SVG image (logo / icon) -> shapes, same pipeline as text ---
+  // o:{h: height (mm), maxW (mm), cx, cy, mode: "dark" (dark parts are printed) | "all" (everything drawn is printed)}
+  function svgPrepare(src){
+    const doc=new DOMParser().parseFromString(String(src),"image/svg+xml"),root=doc.documentElement;
+    if(!root||root.nodeName.toLowerCase()!=="svg"||doc.getElementsByTagName("parsererror").length)throw new Error("SVGとして読めません");
+    const vb=(root.getAttribute("viewBox")||"").trim().split(/[\s,]+/).map(Number);
+    let aw,ah;
+    if(vb.length===4&&vb[2]>0&&vb[3]>0){aw=vb[2];ah=vb[3];}
+    else{aw=parseFloat(root.getAttribute("width"))||100;ah=parseFloat(root.getAttribute("height"))||100;root.setAttribute("viewBox","0 0 "+aw+" "+ah);}
+    if(!root.getAttribute("xmlns"))root.setAttribute("xmlns","http://www.w3.org/2000/svg");
+    return{root,aspect:aw/ah};
+  }
+  function svgImage(root,wpx,hpx){
+    root.setAttribute("width",wpx);root.setAttribute("height",hpx);root.setAttribute("preserveAspectRatio","xMidYMid meet");
+    const url="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(new XMLSerializer().serializeToString(root));
+    return new Promise((res,rej)=>{const im=new Image();im.onload=()=>res(im);im.onerror=()=>rej(new Error("SVGを描画できません"));im.src=url;});
+  }
+  async function svgShapes(src,o){
+    const {root,aspect}=svgPrepare(src);
+    let hmm=o.h,wmm=hmm*aspect;if(wmm>o.maxW){wmm=o.maxW;hmm=wmm/aspect;}
+    const wpx=Math.max(4,Math.round(wmm*PX)),hpx=Math.max(4,Math.round(hmm*PX));
+    const img=await svgImage(root,wpx,hpx);
+    const pad=4,W=wpx+pad*2,H=hpx+pad*2,cv=document.createElement("canvas");cv.width=W;cv.height=H;
+    const cx=cv.getContext("2d");cx.clearRect(0,0,W,H);cx.drawImage(img,pad,pad,wpx,hpx);
+    const d=cx.getImageData(0,0,W,H).data,val=new Float32Array(W*H);
+    for(let i=0;i<W*H;i++){const a=d[i*4+3]/255;if(o.mode==="all"){val[i]=a;continue;}
+      const lum=(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])/255;val[i]=a*(1-lum);}
+    const s=1/PX,ox=W/2,oy=H/2;
+    const dedupe=l=>{const o2=[];for(const p of l){const q=o2[o2.length-1];if(!q||Math.hypot(p[0]-q[0],p[1]-q[1])>2e-3)o2.push(p);}
+      while(o2.length>3&&Math.hypot(o2[0][0]-o2[o2.length-1][0],o2[0][1]-o2[o2.length-1][1])<=2e-3)o2.pop();return o2;};
+    const mm=contours(val,W,H).map(l=>dedupe(rdpClosed(l.map(([x,y])=>[(x-ox)*s+o.cx,(y-oy)*s+o.cy]),0.012))).filter(l=>l.length>=3);
+    return group(mm,0.004);
+  }
+  // small preview image (for lists and the key map)
+  async function svgThumb(src,px){const {root,aspect}=svgPrepare(src);const w=aspect>=1?px:Math.round(px*aspect),h=aspect>=1?Math.round(px/aspect):px;return svgImage(root,Math.max(1,w),Math.max(1,h));}
+  return{contours,group,triangulate,extrude,textShapes,svgShapes,svgThumb,svgPrepare,area,rdpClosed,PX};
 })();
