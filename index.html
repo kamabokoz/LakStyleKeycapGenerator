@@ -19,6 +19,16 @@
   <div class="share-box">
     <div class="share-head"><h2 id="share-title">Xに投稿</h2><button type="button" id="share-close" aria-label="閉じる">×</button></div>
     <img id="share-img" alt="投稿する画像のプレビュー">
+    <details class="share-set share-adjust" id="share-adjust" open><summary>画像の見た目を調整</summary>
+      <div class="share-views" id="share-views" role="group" aria-label="表示"></div>
+      <div class="share-vw" id="share-vw"></div>
+      <div class="share-btns share-zoom">
+        <button type="button" id="share-zin">拡大</button><button type="button" id="share-zout">縮小</button><button type="button" id="share-vreset">向きを戻す</button>
+      </div>
+      <p class="hint" style="padding:6px 0 8px">ドラッグで回転、ホイール（または拡大・縮小ボタン）で大きさを変えられます。操作をやめると、少しして投稿画像に反映されます。</p>
+    </details>
+    <label class="share-lab" for="share-name">キーキャップの名前（画像の見出し）</label>
+    <input id="share-name" class="share-name" maxlength="40" placeholder="LAK風キーキャップ" autocomplete="off">
     <label class="share-lab" for="share-text">投稿文</label>
     <textarea id="share-text" rows="4"></textarea>
     <label class="share-lab" for="share-link">パラメータを開くリンク</label>
@@ -43,100 +53,140 @@
     <button type="button" id="pip-close" aria-label="プレビューを閉じる">×</button></div>
   <div class="pip-slot" id="pip-slot"></div>
 </div>
+<div class="lib-pop" id="lib-pop" hidden role="dialog" aria-modal="false" aria-labelledby="lib-title">
+  <section class="lib" id="lib">
+    <div class="lib-head"><h2 id="lib-title">保存した設定</h2><span class="lib-where" id="lib-where"></span><button type="button" class="lib-close" id="lib-close" aria-label="閉じる">×</button></div>
+    <div class="views lib-tabs" role="tablist">
+      <button role="tab" data-tab="presets" aria-selected="true" aria-pressed="true">プリセット</button>
+      <button role="tab" data-tab="history" aria-selected="false" aria-pressed="false">保存履歴</button>
+    </div>
+    <div id="tab-presets">
+      <form class="lib-new" id="preset-form" onsubmit="return false">
+        <input id="preset-name" maxlength="40" placeholder="名前（例：親指キー用 深め）" aria-label="プリセット名">
+        <button type="submit" id="preset-add">現在の設定を保存</button>
+      </form>
+      <ul class="lib-list" id="list-presets"></ul>
+    </div>
+    <div id="tab-history" hidden>
+      <p class="hint" style="padding:8px 0 0">STLを保存するたびに、そのときの設定が最新20件まで残ります。共有リンクで設定が置き換わったときは、その前の設定も残ります。</p>
+      <ul class="lib-list" id="list-history"></ul>
+    </div>
+    <div class="lib-status" id="lib-status" aria-live="polite"></div>
+  </section>
+</div>
 <div class="app">
-  <div class="view-col">
-    <header>
+  <header class="topbar">
+    <div class="topbar-title">
       <h1>LAK風キーキャップジェネレータ</h1>
       <p>Kailh Choc V2（MX互換十字軸）用の3Dプリント用キーキャップを作れます。キーボードに直接つないでLegendも作れます。</p>
-    </header>
-    <div class="stage" style="margin-top:14px"><div class="vw" id="vw"><canvas id="gl" aria-hidden="true"></canvas><canvas id="cv" aria-label="キーキャップの3Dプレビュー。ドラッグで回転"></canvas></div></div>
+    </div>
+    <div class="topbar-acts">
+      <button type="button" id="lib-btn" class="topbtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="lib-pop">プリセット・履歴</button>
+      <button type="button" id="share-x" class="sharebtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.8 3h3.1l-6.8 7.8L22 21h-6.2l-4.9-6.4L5.3 21H2.2l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z"/></svg><span>Xに投稿</span></button>
+    </div>
+  </header>
+  <div class="view-col">
+    <div class="stage"><div class="vw" id="vw"><canvas id="gl" aria-hidden="true"></canvas><canvas id="cv" aria-label="キーキャップの3Dプレビュー。ドラッグで回転"></canvas></div><div class="stage-note" id="stage-note" hidden></div></div>
     <div class="views" role="group" aria-label="表示">
       <button data-view="iso" aria-pressed="true">斜め</button>
       <button data-view="side" aria-pressed="false">横</button>
       <button data-view="bottom" aria-pressed="false">底面</button>
       <button data-view="row" aria-pressed="false">3キー並び</button>
       <button data-view="section" aria-pressed="false">断面</button>
+      <button data-view="all" aria-pressed="false" hidden>全体</button>
+      <button data-view="sizes" aria-pressed="false" hidden>サイズ見本</button>
     </div>
+    <div class="filbar" id="fil-bar" aria-label="フィラメント"></div>
     <dl class="stats">
       <div><dt>中央の高さ</dt><dd id="s-center">–</dd></div>
       <div><dt>天面の最薄部</dt><dd id="s-thin">–</dd></div>
       <div><dt>底面サイズ</dt><dd id="s-base">–</dd></div>
     </dl>
-    <button type="button" id="share-x" class="sharebtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.8 3h3.1l-6.8 7.8L22 21h-6.2l-4.9-6.4L5.3 21H2.2l7.3-8.3L2 3h6.4l4.4 5.8L17.8 3Zm-1.1 16.2h1.7L7.4 4.7H5.6l11.1 14.5Z"/></svg>このパラメータをXに投稿</button>
     <div class="msgs" id="msgs" aria-live="polite"></div>
   </div>
 
   <div class="side">
-    <section class="lib" id="lib" aria-labelledby="lib-title">
-      <div class="lib-head"><h2 id="lib-title">保存した設定</h2><span class="lib-where" id="lib-where"></span></div>
-      <div class="views lib-tabs" role="tablist">
-        <button role="tab" data-tab="presets" aria-selected="true" aria-pressed="true">プリセット</button>
-        <button role="tab" data-tab="history" aria-selected="false" aria-pressed="false">保存履歴</button>
-      </div>
-      <div id="tab-presets">
-        <form class="lib-new" id="preset-form" onsubmit="return false">
-          <input id="preset-name" maxlength="40" placeholder="名前（例：親指キー用 深め）" aria-label="プリセット名">
-          <button type="submit" id="preset-add">現在の設定を保存</button>
-        </form>
-        <ul class="lib-list" id="list-presets"></ul>
-      </div>
-      <div id="tab-history" hidden>
-        <p class="hint" style="padding:8px 0 0">STLを保存するたびに、そのときの設定が最新20件まで残ります。</p>
-        <ul class="lib-list" id="list-history"></ul>
-      </div>
-      <div class="lib-status" id="lib-status" aria-live="polite"></div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="設定の種類">
+      <button role="tab" type="button" id="tab-shape" data-pane="shape" aria-controls="pane-shape" aria-selected="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9l8-4 8 4-8 4z"/><path d="M4 9v6l8 4 8-4V9"/></svg><span>形状</span></button>
+      <button role="tab" type="button" id="tab-keymap" data-pane="keymap" aria-controls="pane-keymap" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg><span>キーマップ</span></button>
+      <button role="tab" type="button" id="tab-legend" data-pane="legend" aria-controls="pane-legend" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L11 5h2l6 14"/><path d="M8 13h8"/></svg><span>Legend</span></button>
+      <button role="tab" type="button" id="tab-art" data-pane="art" aria-controls="pane-art" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="16" cy="9.5" r="1.8"/><path d="M3 16l5-5 5 5 3-3 5 5"/></svg><span>天面アート</span></button>
+      <button role="tab" type="button" id="tab-out" data-pane="out" aria-controls="pane-out" aria-selected="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg><span>出力</span></button>
+    </nav>
+
+    <section class="pane" id="pane-shape" role="tabpanel" aria-labelledby="tab-shape">
+      <div class="params" id="params"></div>
     </section>
-    <section class="lib km" aria-labelledby="km-title">
-      <div class="lib-head"><h2 id="km-title">キーマップとLegend</h2><span class="lib-where" id="km-dev"></span></div>
-      <div class="km-btns">
-        <button type="button" id="km-usb">ZMK（USB）</button>
-        <button type="button" id="km-ble">ZMK（Bluetooth）</button>
-        <button type="button" id="km-vial">Vial（USB）</button>
-        <button type="button" id="km-open">ファイルから読込</button>
-        <button type="button" id="km-sample" class="ghost">サンプルで試す</button>
-        <input type="file" id="km-file" accept=".json,.vil,application/json" multiple hidden>
+
+    <section class="pane" id="pane-keymap" role="tabpanel" aria-labelledby="tab-keymap" hidden>
+      <div class="lib km">
+        <div class="lib-head"><h2 id="km-title">キーマップ</h2><span class="lib-where" id="km-dev"></span></div>
+        <div class="km-btns">
+          <button type="button" id="km-usb">ZMK（USB）</button>
+          <button type="button" id="km-ble">ZMK（Bluetooth）</button>
+          <button type="button" id="km-vial">Vial（USB）</button>
+          <button type="button" id="km-open">ファイルから読込</button>
+          <button type="button" id="km-sample" class="ghost">サンプルで試す</button>
+          <input type="file" id="km-file" accept=".json,.vil,application/json" multiple hidden>
+        </div>
+        <button type="button" id="km-ble-all" class="linkbtn">Bluetoothの一覧に出ないときは：すべてのデバイスから選ぶ</button>
+        <details class="km-sub km-howto"><summary>つなぎ方と対応ブラウザ</summary>
+          <p class="hint" style="padding:0 0 10px">ZMK：DYA Studioは閉じるか切断してから接続し、接続後にキーボードのアンロック操作（&amp;studio_unlock）をしてください。Vial：Vialアプリを閉じてから接続してください（アンロックは不要）。ファイルは、このアプリのキーマップ、Vialの.vil、キーボード定義（vial.json）を読み込めます（.vilと定義は一緒に選べます）。USBとVialはPCのChrome/Edge、BluetoothはChrome/Edge（Android含む）で使えます。</p>
+        </details>
+        <div class="km-status" id="km-status" aria-live="polite"></div>
+        <details class="km-sub" id="km-logbox" hidden><summary>接続ログ</summary>
+          <pre id="km-log" class="km-log"></pre>
+          <div class="km-btns" style="margin:0 0 10px"><button type="button" id="km-logcopy" class="ghost">ログをコピー</button></div>
+        </details>
+        <div class="km-btns" style="margin-top:6px">
+          <button type="button" id="km-reload" class="ghost" hidden>もう一度読み込む</button>
+          <button type="button" id="km-disconnect" class="ghost" hidden>切断</button>
+        </div>
       </div>
-      <button type="button" id="km-ble-all" class="linkbtn">Bluetoothの一覧に出ないときは：すべてのデバイスから選ぶ</button>
-      <p class="hint" style="padding:8px 0 0">ZMK：DYA Studioは閉じるか切断してから接続し、接続後にキーボードのアンロック操作（&studio_unlock）をしてください。Vial：Vialアプリを閉じてから接続してください（アンロックは不要）。ファイルは、このアプリのキーマップ、Vialの.vil、キーボード定義（vial.json）を読み込めます（.vilと定義は一緒に選べます）。USBとVialはPCのChrome/Edge、BluetoothはChrome/Edge（Android含む）で使えます。</p>
-      <div class="km-status" id="km-status" aria-live="polite"></div>
-      <details class="km-sub" id="km-logbox" hidden><summary>接続ログ</summary>
-        <pre id="km-log" class="km-log"></pre>
-        <div class="km-btns" style="margin:0 0 10px"><button type="button" id="km-logcopy" class="ghost">ログをコピー</button></div>
-      </details>
-      <div class="km-btns" style="margin-top:6px">
-        <button type="button" id="km-reload" class="ghost" hidden>もう一度読み込む</button>
-        <button type="button" id="km-disconnect" class="ghost" hidden>切断</button>
-      </div>
-      <div id="km-loaded" hidden>
+      <div class="lib km" id="km-loaded" hidden>
         <div class="km-mapwrap"><canvas id="km-map" aria-label="キー配列。タップしてキーを選択"></canvas></div>
         <div class="km-btns">
           <button type="button" id="km-multi" class="ghost" aria-pressed="false">複数選択</button>
           <button type="button" id="km-all" class="ghost">全キー選択</button>
           <button type="button" id="km-none" class="ghost">選択解除</button>
+          <button type="button" id="km-export" class="ghost">キーマップを書き出す</button>
         </div>
         <div class="msg" id="km-warn" hidden style="margin-top:10px"></div>
         <div id="km-editor" class="km-editor"></div>
-        <details class="km-sub">
-          <summary>Legendの文字設定</summary>
-          <div id="km-legend"></div>
-        </details>
-        <div class="km-export">
-          <div id="km-exfmt"></div>
-          <div class="km-btns">
-            <button type="button" id="km-exall" class="primary">全キーをLegend付きで保存</button>
-            <button type="button" id="km-exsel">選択中のキーだけ保存</button>
-            <button type="button" id="km-export" class="ghost">キーマップを書き出す</button>
-          </div>
-          <p class="km-status" id="km-exst" aria-live="polite"></p>
-        </div>
       </div>
     </section>
-    <div class="params" id="params"></div>
-  </div>
 
-  <div class="export">
-    <button id="save">STLを保存</button>
-    <div class="status" id="status">STLと同じ形状のOpenSCADファイルを、ZIPにまとめて保存します。</div>
+    <section class="pane" id="pane-legend" role="tabpanel" aria-labelledby="tab-legend" hidden>
+      <div class="pane-empty" data-needs-km><p>キーマップを読み込むと、キーごとにLegendを印字できます。ここではフォントや大きさ、太さ、マーク、画像を設定します。</p><button type="button" class="ghost" data-goto="keymap">キーマップを読み込む</button></div>
+      <div class="lib"><div id="km-legend"></div></div>
+    </section>
+
+    <section class="pane" id="pane-art" role="tabpanel" aria-labelledby="tab-art" hidden>
+      <div class="pane-empty" data-needs-km><p>天面アートは、キーマップのキー配列の上に絵を置いて印字します。先にキーマップを読み込んでください。</p><button type="button" class="ghost" data-goto="keymap">キーマップを読み込む</button></div>
+      <div class="lib" data-km-only><div id="km-art"></div></div>
+    </section>
+
+    <section class="pane" id="pane-out" role="tabpanel" aria-labelledby="tab-out" hidden>
+      <div class="lib">
+        <div id="out-target"></div>
+        <div id="km-exfmt"></div>
+        <div id="km-sizes" hidden></div>
+        <div id="out-fil"></div>
+      </div>
+    </section>
+
+    <div class="savebar" id="savebar">
+      <div class="savebar-txt">
+        <div class="savebar-sum" id="out-sum"></div>
+        <div class="status" id="status" aria-live="polite"></div>
+        <p class="km-status" id="km-exst" aria-live="polite" hidden></p>
+        <p class="km-status" id="sz-st" aria-live="polite" hidden></p>
+      </div>
+      <button type="button" id="out-save" class="primary">保存</button>
+      <button type="button" id="save" hidden>STLを保存</button>
+      <button type="button" id="km-exall" hidden>全キーを保存</button>
+      <button type="button" id="km-exsel" hidden>選択中のキーを保存</button>
+    </div>
   </div>
 </div>
 
@@ -150,6 +200,11 @@
 <script src="js/app.js"></script>
 <script src="js/share.js"></script>
 <script src="js/keymap.js"></script>
+<script src="js/artsamples.js"></script>
+<script src="js/art.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/overview.js"></script>
+<script src="js/layout.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

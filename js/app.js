@@ -157,7 +157,9 @@ function analyze(){
 const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
 let W=0,H=0,view="iso",tris=[],dirty=true;
 let yaw=-0.6,el=0.55,ty=-0.6,te=0.55,span=24,ts=24;
-const VIEWS={iso:[-0.6,0.55,24],side:[0,0.04,24],bottom:[0,-1.4,24],row:[0,0.45,58],section:[0,0,24]};
+const VIEWS={iso:[-0.6,0.55,24],side:[0,0.04,24],bottom:[0,-1.4,24],row:[0,0.45,58],section:[0,0,24],all:[0,0.95,240],sizes:[-0.25,0.9,60]};
+const WIDE=v=>v==="all"||v==="sizes"; // views of many keys: zoomable, computed span
+function viewSpan(v){return v==="all"?wholeSpan():v==="sizes"?sizesSpan():(VIEWS[v]||VIEWS.iso)[2];}
 const vw=document.getElementById("vw"),glc=document.getElementById("gl");
 function resize(){W=vw.clientWidth||360;H=vw.clientHeight||340;const d=window.devicePixelRatio||1;cv.width=W*d;cv.height=H*d;ctx.setTransform(d,0,0,d,0,0);
   glc.width=Math.round(W*d);glc.height=Math.round(H*d);dirty=true;}
@@ -181,6 +183,13 @@ let GLR=(()=>{
   function upload(T){
     const nf=T.length,pos=new Float32Array(nf*9),nor=new Float32Array(nf*9),col=new Float32Array(nf*9);
     const fn=new Float32Array(nf*3),fa=new Float32Array(nf);
+    if(nf>150000||view==="all"){ // whole-keyboard preview: flat shading keeps the upload fast
+      T.forEach((t,i)=>{const a=t[0],b=t[1],c=t[2],ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2],wx=c[0]-a[0],wy=c[1]-a[1],wz=c[2]-a[2];
+        let x=uy*wz-uz*wy,y=uz*wx-ux*wz,z=ux*wy-uy*wx;const l=Math.hypot(x,y,z)||1e-12;x/=l;y/=l;z/=l;const col3=COLS[t[3]||0];
+        for(let k=0;k<3;k++){const o=i*9+k*3,q=t[k];pos[o]=q[0];pos[o+1]=q[1];pos[o+2]=q[2];nor[o]=x;nor[o+1]=y;nor[o+2]=z;col[o]=col3[0]/255;col[o+1]=col3[1]/255;col[o+2]=col3[2]/255;}});
+      for(const [b,d] of [[buf.p,pos],[buf.n,nor],[buf.c,col]]){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,d,gl.STATIC_DRAW);}
+      count=nf*3;ref=T;return;
+    }
     const groups=new Map(),key=q=>Math.round(q[0]*2e4)+","+Math.round(q[1]*2e4)+","+Math.round(q[2]*2e4);
     T.forEach((t,i)=>{const a=t[0],b=t[1],c=t[2];const u=[b[0]-a[0],b[1]-a[1],b[2]-a[2]],w=[c[0]-a[0],c[1]-a[1],c[2]-a[2]];
       const x=u[1]*w[2]-u[2]*w[1],y=u[2]*w[0]-u[0]*w[2],z=u[0]*w[1]-u[1]*w[0],l=Math.hypot(x,y,z)||1e-12;
@@ -200,7 +209,7 @@ let GLR=(()=>{
     if(T!==ref)upload(T);
     gl.viewport(0,0,glc.width,glc.height);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);gl.useProgram(prog);
-    const k=Math.min(W,H*1.25)/span,Dd=140;
+    const k=Math.min(W,H*1.25)/span,Dd=140*Math.max(1,span/30);
     gl.uniform4f(loc.rot,Math.cos(yaw),Math.sin(yaw),Math.cos(el),Math.sin(el));
     gl.uniform4f(loc.prm,k/(W/2),k/(H/2),Dd,2.4);gl.uniform3f(loc.L,L[0],L[1],L[2]);
     for(const [b,l] of [[buf.p,loc.p],[buf.n,loc.n],[buf.c,loc.c]]){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,3,gl.FLOAT,false,0,0);}
@@ -212,6 +221,11 @@ let GLR=(()=>{
 })();
 let prevTok=0;
 function rebuildPreview(){
+  if(view!=="all"&&typeof wholeTok!=="undefined"){wholeTok++;clearTimeout(wholeTimer);}
+  if(view!=="sizes"&&typeof sampleReset==="function")sampleReset();
+  if(view==="all"&&typeof KM!=="undefined"&&KM.keys.length){scheduleWhole();return;}
+  if(view==="sizes"&&typeof scheduleSamples==="function"){scheduleSamples();return;}
+  wholeNote("");
   tris=[];const xs=view==="row"?[-P.pitch,0,P.pitch]:[0];
   xs.forEach(x=>{tris=tris.concat(buildMesh(P,8,48,x));});dirty=true;
   const tok=++prevTok;
@@ -221,7 +235,8 @@ function rebuildPreview(){
       const set=new Set(keysToShow.map(([,x])=>x));
       tris=[];xs.forEach(x=>{if(!set.has(x))tris=tris.concat(buildMesh(paramsFor(null),8,48,x));});
       const lm=legendMatFn(); // per-layer filaments (3MF): show every legend (also inlays) in its filament colour
-      arr.forEach(pt=>{tris=tris.concat(pt.body);if(lm)pt.legendBy.forEach(g=>{tris=tris.concat(recolor(g.tris,lm(g.layer)));});else if(LCFG.style!=="engrave")tris=tris.concat(pt.legend);});dirty=true;
+      arr.forEach(pt=>{tris=tris.concat(pt.body);if(lm)pt.legendBy.forEach(g=>{tris=tris.concat(recolor(g.tris,lm(g.layer)));});else if(LCFG.style!=="engrave")tris=tris.concat(pt.legend);
+        (pt.art||[]).forEach(x=>{tris=tris.concat(recolor(x.tris,extMat(x.ext)));});});dirty=true; // 天面アート in its filament colours
       const hint=document.getElementById("km-warn");
       legendShapes(curKey).then(r=>{const w=[];if(r.dropped.length)w.push("入りきらない・重なるため省いたLegend: "+r.dropped.join(", "));
         if(LCFG.style==="engrave"&&r.shapes.length&&minPocketFloor(r.shapes)<0.5)w.push("彫り込みの底と内側の天井の間が0.5mm未満です。彫り込みを浅くしてください。");
@@ -233,11 +248,11 @@ function rebuildPreview(){
 const L=(()=>{const v=[-0.45,0.7,-0.55],n=Math.hypot(...v);return v.map(x=>x/n);})();
 // 0 body, 1 stem, 2 cross hole, 3 legend; 4.. preview colours for filament 1..8 (per-layer legends)
 const COLS=[[216,213,205],[160,157,150],[110,108,103],[58,62,68],
-  [245,243,238],[58,62,68],[40,128,110],[214,98,48],[58,108,196],[180,62,130],[204,164,36],[186,52,52]];
+  [245,243,238],[58,62,68],[40,128,110],[214,98,48],[58,108,196],[180,62,130],[204,164,36],[186,52,52]]; // filled from the filament colours by setCols()
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
 function render3D(){
   ctx.clearRect(0,0,W,H);
-  const cy=Math.cos(yaw),sy=Math.sin(yaw),ce=Math.cos(el),se=Math.sin(el),zc=2.4,Dd=140,k=Math.min(W,H*1.25)/span,out=[];
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),ce=Math.cos(el),se=Math.sin(el),zc=2.4,Dd=140*Math.max(1,span/30),k=Math.min(W,H*1.25)/span,out=[];
   for(const t of tris){
     const v=[t[0],t[1],t[2]].map(p=>{const x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z1=p[2]-zc;return[x1,y1*se+z1*ce,y1*ce-z1*se];});
     const u=[v[1][0]-v[0][0],v[1][1]-v[0][1],v[1][2]-v[0][2]],w=[v[2][0]-v[0][0],v[2][1]-v[0][1],v[2][2]-v[0][2]];
@@ -261,7 +276,7 @@ function renderSection(){
     const ins=(x,pts)=>{let j=top.findIndex(p=>p[0]>x);if(j<0)j=top.length;top.splice(j,0,...pts);};
     ins(-s,[[-s,zAt(-s,true)],[-s,zAt(-s,false)]]);ins(s,[[s,zAt(s,false)],[s,zAt(s,true)]]);}
   const poly=(pts,fill)=>{ctx.beginPath();pts.forEach((p,i)=>{const q=m(p[0],p[1]);i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.closePath();ctx.fillStyle=fill;ctx.fill();};
-  const key=css("--key")||"#D8D5CD",stage=css("--stage")||"#D3D9DE",ink=css("--ink")||"#1C252D",muted=css("--muted")||"#56626C";
+  const key="rgb("+COLS[0].join(",")+")",stage=css("--stage")||"#D3D9DE",ink=css("--ink")||"#1C252D",muted=css("--muted")||"#56626C";
   poly([[-D.base/2,0],[-w,zAt(-w,true)],...top,[w,zAt(w,true)],[D.base/2,0]],key);
   const bi=D.base-2*P.wall,itop=D.base-(D.base-P.top_size)*P.cavity_h/P.edge_h-2*P.wall;
   poly([[-bi/2,0],[-itop/2,P.cavity_h],[itop/2,P.cavity_h],[bi/2,0]],stage);
@@ -287,9 +302,13 @@ function loop(){
   if(Math.abs(dy)>1e-3||Math.abs(de)>1e-3||Math.abs(ds)>1e-2){const f=matchMedia("(prefers-reduced-motion: reduce)").matches?1:0.2;yaw+=dy*f;el+=de*f;span+=ds*f;dirty=true;}
   if(dirty){render();dirty=false;}requestAnimationFrame(loop);
 }
-document.querySelectorAll(".views button").forEach(b=>b.addEventListener("click",()=>{
-  const prev=view;view=b.dataset.view;document.querySelectorAll(".views button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
-  const v=VIEWS[view];ty=v[0];te=v[1];ts=v[2];if(prev==="row"||view==="row")rebuildPreview();dirty=true;}));
+document.querySelectorAll(".views:not(.lib-tabs) button").forEach(b=>b.addEventListener("click",()=>{
+  const prev=view;view=b.dataset.view;document.querySelectorAll(".views:not(.lib-tabs) button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+  const v=VIEWS[view];ty=v[0];te=v[1];ts=viewSpan(view);
+  if(prev==="row"||view==="row"||WIDE(prev)||WIDE(view)){tris=WIDE(view)?[]:tris;rebuildPreview();}dirty=true;}));
+// wheel zoom (whole-keyboard view)
+cv.addEventListener("wheel",e=>{const sh=typeof shareViewerOn!=="undefined"&&shareViewerOn;if(!WIDE(view)&&!sh)return;e.preventDefault();
+  ts=Math.min(WIDE(view)?viewSpan(view)*2:120,Math.max(WIDE(view)?20:8,ts*Math.pow(1.0015,e.deltaY)));},{passive:false}); // whole view, and the viewer in the post dialog
 let drag=null;
 cv.addEventListener("pointerdown",e=>{if(view==="section")return;drag=[e.clientX,e.clientY];try{cv.setPointerCapture(e.pointerId);}catch(_){}});
 cv.addEventListener("pointermove",e=>{if(!drag)return;ty+=(e.clientX-drag[0])*0.01;te=Math.max(-1.5,Math.min(1.5,te+(e.clientY-drag[1])*0.01));drag=[e.clientX,e.clientY];});
@@ -440,7 +459,7 @@ function renderLib(){
   if(!Store.data.history.length){const li=document.createElement("li");li.innerHTML='<span class="empty">まだ履歴はありません。STLを保存すると、ここに設定が残ります。</span>';lh.appendChild(li);}
   Store.data.history.forEach(it=>{
     const li=document.createElement("li");
-    const nm=document.createElement("div");nm.className="nm";nm.textContent=when(it.createdAt)+"　"+(it.quality==2?"高精細":"標準");
+    const nm=document.createElement("div");nm.className="nm";nm.textContent=when(it.createdAt)+"　"+(it.note?String(it.note).slice(0,40):(it.quality==2?"高精細":"標準"));
     const meta=document.createElement("div");meta.className="meta";meta.textContent=summary(it.params);
     const acts=document.createElement("div");acts.className="acts";
     acts.appendChild(btn("読み込む","primary",()=>loadParams(it.params,when(it.createdAt)+" の履歴")));
@@ -468,11 +487,13 @@ document.querySelectorAll(".lib-tabs button").forEach(b=>b.addEventListener("cli
 let downloads=null,dlReady=false;
 function updateSaveState(){
   const btn=document.getElementById("save"),st=document.getElementById("status");
+  setTimeout(()=>{if(typeof refreshOut==="function")refreshOut();},0); // the save bar follows this button
   if(!dlReady){btn.disabled=true;st.textContent="保存の準備をしています…";return;}
   if(!downloads&&window.claude){btn.disabled=true;st.textContent="この表示では保存を使えません。";return;}
   if(lastA&&lastA.errs.length){btn.disabled=true;st.textContent="赤いメッセージの項目を直すと保存できます。";return;}
   btn.disabled=false;
-  st.textContent="STLと同じ形状のOpenSCADファイルを、ZIPにまとめて保存します。";
+  if(st.textContent==="保存の準備をしています…"||st.textContent==="赤いメッセージの項目を直すと保存できます。")st.textContent=""; // the save bar already says what is saved
+  if(typeof refreshOut==="function")refreshOut();
 }
 async function rawSave(blob,filename){
   if(downloads){await downloads.save({filename,data:blob});return;}
@@ -545,7 +566,7 @@ document.getElementById("save").addEventListener("click",async()=>{
     const c=e&&e.code;
     st.textContent=c==="declined"?"保存をキャンセルしました。":c==="rate_limited"?"保存の確認がすでに開いています。少し待ってからもう一度押してください。":"保存できませんでした（"+(c||"error")+"）。";
     if(["unavailable","not_granted","capability_disabled","capability_removed"].includes(c)){downloads=null;}
-  }finally{btn.disabled=(!downloads&&!!window.claude)||(lastA&&lastA.errs.length>0);}
+  }finally{btn.disabled=(!downloads&&!!window.claude)||(lastA&&lastA.errs.length>0);if(typeof refreshOut==="function")refreshOut();}
 });
 (async()=>{
   try{ if(window.claude&&window.claude.use){downloads=await window.claude.use("downloads");} }catch(_){downloads=null;}

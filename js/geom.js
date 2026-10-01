@@ -81,26 +81,40 @@ function rr(s,r,n,seg,fixedM){
   return o;
 }
 // split long interior edges of a 2D triangulation (boundary edges untouched -> no T-junctions)
-function refineTris(poly,tris,maxLen){
+// split long interior edges of a 2D triangulation (boundary edges untouched -> no T-junctions)
+// pred(x,y): split only edges whose midpoint passes (null = everywhere). Every pass splits all marked
+// edges at once (1-to-2/3/4 triangle splits), so a few passes are enough.
+function refineTris(poly,tris,maxLen,pred){
   // weld duplicate vertices (hole bridges) so shared edges are recognised as interior
   const idx=new Map(),remap=[],pts=[];
   poly.forEach((p,i)=>{const k=p[0]+","+p[1];if(idx.has(k))remap[i]=idx.get(k);else{idx.set(k,pts.length);remap[i]=pts.length;pts.push(p);}});
-  const T=tris.map(t=>t.map(i=>remap[i]));
+  let T=tris.map(t=>t.map(i=>remap[i]));
   const ek=(a,b)=>a<b?a*1048576+b:b*1048576+a;
-  for(let pass=0;pass<60;pass++){
-    const E=new Map();T.forEach((t,ti)=>{for(let i=0;i<3;i++){const k=ek(t[i],t[(i+1)%3]);const v=E.get(k);if(v)v.push(ti);else E.set(k,[ti]);}});
-    const cand=[];
-    for(const [k,arr] of E){if(arr.length!==2)continue;const a=Math.floor(k/1048576),b=k%1048576;const l=Math.hypot(pts[a][0]-pts[b][0],pts[a][1]-pts[b][1]);if(l>maxLen)cand.push([l,a,b,arr]);}
-    if(!cand.length)break;
-    cand.sort((x,y)=>y[0]-x[0]);
-    const used=new Uint8Array(T.length);
-    for(const [,a,b,[t1,t2]] of cand){
-      if(used[t1]||used[t2])continue;used[t1]=used[t2]=1;
-      const m=pts.length;pts.push([(pts[a][0]+pts[b][0])/2,(pts[a][1]+pts[b][1])/2]);
-      for(const ti of [t1,t2]){const t=T[ti];const i=t.findIndex((v,j)=>(v===a&&t[(j+1)%3]===b)||(v===b&&t[(j+1)%3]===a));
-        const u=t[i],v=t[(i+1)%3],w=t[(i+2)%3];T[ti]=[u,m,w];T.push([m,v,w]);}
+  // Delaunay flips keep the triangles well shaped (ear clipping leaves long slivers that would split into thousands)
+  const tidy=()=>{if(typeof LEG!=="undefined"&&LEG.flip)T=LEG.flip(pts,T.filter(t=>t[0]!==t[1]&&t[1]!==t[2]&&t[0]!==t[2]));};
+  tidy();
+  for(let pass=0;pass<16;pass++){
+    const cnt=new Map();for(const t of T)for(let i=0;i<3;i++){const k=ek(t[i],t[(i+1)%3]);cnt.set(k,(cnt.get(k)||0)+1);}
+    const mid=new Map();let any=false;
+    const midOf=(a,b)=>{const k=ek(a,b);let m=mid.get(k);if(m!==undefined)return m;
+      if(cnt.get(k)!==2){mid.set(k,-1);return -1;}
+      const mx=(pts[a][0]+pts[b][0])/2,my=(pts[a][1]+pts[b][1])/2;
+      if(Math.hypot(pts[a][0]-pts[b][0],pts[a][1]-pts[b][1])<=maxLen||(pred&&!pred(mx,my))){mid.set(k,-1);return -1;}
+      m=pts.length;pts.push([mx,my]);mid.set(k,m);any=true;return m;};
+    const out=[];
+    for(const t of T){
+      const m=[midOf(t[0],t[1]),midOf(t[1],t[2]),midOf(t[2],t[0])],n=m.filter(x=>x>=0).length;
+      if(!n){out.push(t);continue;}
+      // rotate so the pattern starts at edge 0
+      let r=0;if(n===1)r=m.findIndex(x=>x>=0);else if(n===2)r=(m.findIndex(x=>x<0)+1)%3;
+      const a=t[r],b=t[(r+1)%3],c=t[(r+2)%3],mab=m[r],mbc=m[(r+1)%3],mca=m[(r+2)%3];
+      if(n===1)out.push([a,mab,c],[mab,b,c]);
+      else if(n===2)out.push([a,mab,mbc],[mab,b,mbc],[a,mbc,c]);
+      else out.push([a,mab,mca],[mab,b,mbc],[mca,mbc,c],[mab,mbc,mca]);
     }
+    T=out;if(!any)break;
   }
+  tidy();
   return{poly:pts,tris:T};
 }
 function crossPoly(P){
@@ -141,6 +155,68 @@ function ringR(d,P,D){
     else r=Math.max(rp-(d-D.d1),0.3);}
   return Math.max(0.05,Math.min(r,(P.top_size-2*d)/2-0.01));
 }
+// Refine a face triangulation inside a zone: points on a jittered 0.3mm grid (kept clear of the edges) are
+// inserted into the triangles and the result is tidied with Delaunay flips. outer/holes: the face's loops.
+function refineZone(poly,tris,outer,holes,rf){
+  const loops=[outer,...holes],pip=(pt,l)=>{let c=false;for(let i=0,j=l.length-1;i<l.length;j=i++){const a=l[i],b=l[j];if(((a[1]>pt[1])!==(b[1]>pt[1]))&&(pt[0]<(b[0]-a[0])*(pt[1]-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;};
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const p of outer){x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);x1=Math.max(x1,p[0]);y1=Math.max(y1,p[1]);}
+  // edges in buckets for the clearance test
+  const B=1,bk=new Map(),key=(i,j)=>i+","+j;
+  for(const l of loops)for(let i=0;i<l.length;i++){const a=l[i],b=l[(i+1)%l.length];
+    for(let gx=Math.floor(Math.min(a[0],b[0])/B)-1;gx<=Math.floor(Math.max(a[0],b[0])/B)+1;gx++)for(let gy=Math.floor(Math.min(a[1],b[1])/B)-1;gy<=Math.floor(Math.max(a[1],b[1])/B)+1;gy++){
+      const k=key(gx,gy);let v=bk.get(k);if(!v)bk.set(k,v=[]);v.push([a,b]);}}
+  const clear=(p,c)=>{const v=bk.get(key(Math.floor(p[0]/B),Math.floor(p[1]/B)));if(!v)return true;
+    for(const [a,b] of v){const dx=b[0]-a[0],dy=b[1]-a[1],L=dx*dx+dy*dy||1e-12;let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L;t=Math.max(0,Math.min(1,t));if(Math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy)<c)return false;}return true;};
+  const st=rf.len,add=[],ok=(p,c)=>rf.pred(p[0],p[1])&&pip(p,outer)&&!holes.some(hh=>pip(p,hh))&&clear(p,c);
+  if(rf.rings){ // points on the rings that define the surface (e.g. the step profile): the triangles follow them
+    for(const l of rf.rings)for(const p of l)if(ok(p,0.1))add.push(p);
+  }else for(let y=y0+st/2,r=0;y<y1;y+=st*0.866,r++)for(let x=x0+st/2+(r%2?st/2:0);x<x1;x+=st){
+    const h=Math.sin(x*12.9898+y*78.233)*43758.5453,p=[x+(h-Math.floor(h)-0.5)*st*0.1,y+((h*1.7)-Math.floor(h*1.7)-0.5)*st*0.1];
+    if(ok(p,st*0.45))add.push(p);}
+  if(!add.length)return{poly,tris};
+  const pts=poly.slice();let T=tris.map(t=>t.slice());
+  const cr=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+  for(const p of add){ // locate (brute force is fine at these sizes) and split 1-to-3
+    for(let i=0;i<T.length;i++){const [a,b,c]=T[i],A=pts[a],Bp=pts[b],C=pts[c];
+      if(cr(A,Bp,p)>1e-12&&cr(Bp,C,p)>1e-12&&cr(C,A,p)>1e-12){const n=pts.length;pts.push(p);T[i]=[a,b,n];T.push([b,c,n],[c,a,n]);break;}}}
+  if(typeof LEG!=="undefined"&&LEG.flip)T=LEG.flip(pts,T);
+  if(rf.z)T=surfaceFlips(pts,T,rf);
+  return{poly:pts,tris:T};
+}
+// data-dependent flips: in the zone, use the diagonal whose midpoint lies closer to the real surface rf.z
+function surfaceFlips(pts,T,rf){
+  const ek=(a,b)=>a<b?a*1048576+b:b*1048576+a,cr=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+  const Z=new Map(),z=i=>{let v=Z.get(i);if(v===undefined){v=rf.z(pts[i][0],pts[i][1]);Z.set(i,v);}return v;};
+  const err=(a,b)=>{const mx=(pts[a][0]+pts[b][0])/2,my=(pts[a][1]+pts[b][1])/2;return Math.abs((z(a)+z(b))/2-rf.z(mx,my));};
+  for(let pass=0;pass<12;pass++){
+    const E=new Map();T.forEach((t,ti)=>{for(let i=0;i<3;i++){const k=ek(t[i],t[(i+1)%3]);const v=E.get(k);if(v)v.push(ti);else E.set(k,[ti]);}});
+    let flips=0;const used=new Uint8Array(T.length);
+    for(const [,arr] of E){
+      if(arr.length!==2)continue;const [t1,t2]=arr;if(used[t1]||used[t2])continue;
+      const A=T[t1],B=T[t2];let i=0;for(;i<3;i++){const a=A[i],b=A[(i+1)%3];if(B.some((v,j)=>v===b&&B[(j+1)%3]===a))break;}
+      if(i===3)continue;
+      const a=A[i],b=A[(i+1)%3],c=A[(i+2)%3],d=B[(B.indexOf(b)+2)%3];
+      const mx=(pts[a][0]+pts[b][0])/2,my=(pts[a][1]+pts[b][1])/2;if(!rf.pred(mx,my))continue;
+      if(cr(pts[a],pts[d],pts[c])<=1e-9||cr(pts[d],pts[b],pts[c])<=1e-9)continue; // quad not convex
+      if(err(c,d)<err(a,b)-1e-4){T[t1]=[a,d,c];T[t2]=[d,b,c];used[t1]=used[t2]=1;flips++;}
+    }
+    if(!flips)break;
+  }
+  return T;
+}
+// fine triangles around the step so a face laid over it keeps the step's shape
+function stepRefine(P,D){
+  if(P.boundary==2)return null;
+  const b0=P.boundary==0?P.edge_band-D.fil.Lf:0,d1=D.d1,lo=b0-0.1,hi=d1+0.3;
+  // the rings of the step (same inset distances as the body mesh), resampled every 0.4mm along the ring
+  const rings=[];let last=-1;
+  for(const [d] of insetList(P,D)){if(d<=lo||d>=hi||d-last<1e-6)continue;last=d;
+    const loop=rr(P.top_size-2*d,ringR(d,P,D),8,0.8),o=[];let acc=0.4;
+    for(let i=0;i<loop.length;i++){const a=loop[i],b=loop[(i+1)%loop.length],L=Math.hypot(b[0]-a[0],b[1]-a[1]);
+      while(acc<=L){const t=acc/L;o.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);acc+=0.4;}acc-=L;}
+    rings.push(o);}
+  return{len:0.3,rings,z:(x,y)=>topZ(x,y,P,D),pred:(x,y)=>{const d=-sdRR(x,y,P.top_size,P.r_top);return d>lo&&d<hi;}};
+}
 function plateauRect(P,D){const k=plateauRingIndex(P,D),d=insetList(P,D)[k][0];return{size:P.top_size-2*d,r:ringR(d,P,D),d};}
 function plateauRingIndex(P,D){const L=insetList(P,D);const lim=P.boundary==2?0.3:D.d1;
   for(let k=0;k<L.length;k++){if(L[k][0]>=lim-1e-7&&!L[k][1])return k;}return L.length-1;}
@@ -151,10 +227,25 @@ function buildMesh(P,N,M,offx,opts){
   const ins=insetList(P,D);
   const rings=ins.map(q=>rr(P.top_size-2*q[0],ringR(q[0],P,D),N,0.8).map(p=>[p[0],p[1],ztop(p[0],p[1],q[0],q[1],P,D)]));
   const pocket=opts&&opts.shapes&&opts.shapes.length?opts:null;
-  let k0=rings.length-1,topT=null;
-  if(pocket){k0=plateauRingIndex(P,D);topT=pocketTop(rings[k0],pocket.shapes,pocket.depth,P,D,offx);}
+  let k0=rings.length-1,topT=null,bandT=null;const KB=4,noZip=new Set();
+  if(pocket){
+    k0=plateauRingIndex(P,D);
+    // shapes that leave the plateau (天面アート on the outer band) need the band cut too
+    const pr=plateauRect(P,D),out=s=>s.outer.some(p=>sdRR(p[0],p[1],pr.size,pr.r)>-0.05);
+    const plate=pocket.shapes.filter(s=>!out(s)),band=pocket.shapes.filter(out),zAll=(x,y)=>topZ(x,y,P,D);
+    if(band.length&&(P.boundary==1||(P.boundary==0&&D.run>0))){ // continuous top: one face over it, finely split around the step
+      k0=0;topT=pocketTop(rings[0],pocket.shapes,pocket.depth,P,D,offx,{zs:zAll,refine:stepRefine(P,D)});
+    }else{
+      topT=pocketTop(rings[k0],plate,pocket.depth,P,D,offx);
+      if(band.length&&P.boundary==0&&k0>KB)bandT=pocketTop(rings[0],band,pocket.depth,P,D,offx,{zs:zAll,inner:rings[KB]});
+    }
+  }
   else{chain.push([[0,0,P.edge_h+D.E+D.dome]]);mats.push(0);}
-  for(let k=k0;k>=0;k--){chain.push(rings[k]);mats.push(0);}
+  for(let k=k0;k>=0;k--){
+    if(bandT&&k>0&&k<KB)continue;          // the band between ring 0 and ring KB is the band face
+    chain.push(rings[k]);mats.push(0);
+    if(bandT&&k===KB)noZip.add(chain.length-1);
+  }
   { // outer side: match the top edge ring point-for-point so the twisted side face is split finely
     const m0=Math.floor((P.top_size-2*Math.max(P.r_top,0.3))/0.8);
     chain.push(rr(D.base,P.r_base,N,m0>1?1:0,m0>1?m0:0).map(p=>[p[0],p[1],0]));mats.push(0);
@@ -172,13 +263,13 @@ function buildMesh(P,N,M,offx,opts){
   chain.push(cp.map(p=>[p[0],p[1],P.cross_depth]));mats.push(2);
   chain.push([[0,0,P.cross_depth]]);mats.push(2);
   let T=[];
-  for(let k=0;k<chain.length-1;k++)zipRings(chain[k].map(mv),chain[k+1].map(mv),T,mats[k+1]);
+  for(let k=0;k<chain.length-1;k++){if(noZip.has(k))continue;zipRings(chain[k].map(mv),chain[k+1].map(mv),T,mats[k+1]);}
   if(topT){
     // make the chain consistent with the top faces (which use up-facing normals, ring traversed CCW)
     const R=rings[k0].map(mv),a=R[0],b=R[1],eq=(p,q)=>p[0]===q[0]&&p[1]===q[1]&&p[2]===q[2];
     let same=false;for(const t of T){for(let i=0;i<3;i++){if(eq(t[i],a)&&eq(t[(i+1)%3],b)){same=true;break;}}if(same)break;}
     if(same)for(const t of T){const x=t[1];t[1]=t[2];t[2]=x;}
-    T=T.concat(topT);
+    T=T.concat(topT,bandT||[]);
   }
   orient(T);
   const parts=[T];
@@ -226,23 +317,38 @@ function steinerPts(outer,holes,step,clear){
   return out;
 }
 // top of the plateau with legend pockets: surface faces, pocket walls and floors (up-normal convention)
-function pocketTop(ring,shapes,depth,P,D,offx){
-  const zs=(x,y)=>zPlateau(x,y,P,D);
+// o2: {zs: height of the surface, inner: ring cut out of the face (annulus), extra: points that keep the surface shape}
+function pocketTop(ring,shapes,depth,P,D,offx,o2){
+  o2=o2||{};
+  const zs=o2.zs||((x,y)=>zPlateau(x,y,P,D));
   const loops=[];
   for(const s of shapes){loops.push(s.outer);for(const h of s.holes)loops.push(h);}
   const pipf=(pt,poly)=>{let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if(((a[1]>pt[1])!==(b[1]>pt[1]))&&(pt[0]<(b[0]-a[0])*(pt[1]-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;};
   const info=loops.map(l=>({l:(LEG.area(l)>0?l:l.slice().reverse()),depth:1}));
   info.forEach((o,i)=>{o.depth=1+info.filter((q,j)=>j!==i&&pipf(o.l[0],q.l)).length;});
   const ring2=ring.map(p=>[p[0],p[1]]);const ringZ=new Map(ring.map(p=>[p[0]+","+p[1],p[2]]));
+  if(o2.inner)for(const p of o2.inner)ringZ.set(p[0]+","+p[1],p[2]);
   const root={l:ring2,depth:0};
   const all=[root,...info];
   const kids=o=>info.filter(q=>q.depth===o.depth+1&&(o===root||pipf(q.l[0],o.l)));
   const T=[],m3=3,sh=p=>[p[0]+offx,p[1],p[2]];
-  const face=(outer,holes,zf,mat,refine)=>{const {poly,tris}=LEG.triangulate({outer,holes},refine?steinerPts(outer,holes,0.9,0.35):null);
+  // extra points (e.g. rings of a curved slope) inside the face, not too close to its edges
+  const keep=(pts,outer,holes)=>{const segs=[outer,...holes];const out=[];
+    for(const p of pts){if(!pipf(p,outer)||holes.some(h=>pipf(p,h)))continue;let ok=true;
+      for(const l of segs){for(let i=0;i<l.length&&ok;i++){const a=l[i],b=l[(i+1)%l.length],dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy||1e-12;
+        let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2;t=Math.max(0,Math.min(1,t));if(Math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy)<0.04)ok=false;}if(!ok)break;}
+      if(ok)out.push([p[0],p[1]]);}return out;};
+  const face=(outer,holes,zf,mat,refine,extra)=>{const st=refine?steinerPts(outer,holes,0.9,0.35).filter(p=>!o2.refine||!o2.refine.pred(p[0],p[1])).concat(extra?keep(extra,outer,holes):[]):null;
+    let {poly,tris}=LEG.triangulate({outer,holes},st);
+    if(o2.refine){const r=refineZone(poly,tris,outer,holes,o2.refine);poly=r.poly;tris=r.tris;}
     const V=poly.map(p=>sh([p[0],p[1],zf(p[0],p[1])]));for(const [a,b,c] of tris)T.push([V[a],V[b],V[c],mat]);};
+  // the inner ring (annulus) is a hole of the deepest surface region around it (art may circle it)
+  let host=root;
+  if(o2.inner){const c=[o2.inner[0][0],o2.inner[0][1]];let best=0;for(const q of info)if(q.depth%2===0&&q.depth>best&&pipf(c,q.l)){best=q.depth;host=q;}}
   for(const o of all){
-    const holes=kids(o).map(q=>q.l.slice().reverse());
-    if(o.depth%2===0)face(o.l,holes,(x,y)=>{const z=ringZ.get(x+","+y);return z!==undefined?z:zs(x,y);},0,true);
+    let holes=kids(o).map(q=>q.l.slice().reverse());
+    if(o===host&&o2.inner)holes=holes.concat([o2.inner.map(p=>[p[0],p[1]]).reverse()]);
+    if(o.depth%2===0)face(o.l,holes,(x,y)=>{const z=ringZ.get(x+","+y);return z!==undefined?z:zs(x,y);},0,!o2.flat,o===root?o2.extra:null); // flat: a plane needs no extra points
     else face(o.l,holes,(x,y)=>zs(x,y)-depth,m3);
   }
   for(const o of info){ // walls; loop is CCW. odd depth: air inside -> normal inward
@@ -271,7 +377,8 @@ function meshXml(T){
   return out.join("");
 }
 // items: [{name, x, y, parts:[{name, tris, extruder}]}]
-function build3MF(items){
+// projectSettings: optional object written as Metadata/project_settings.config (e.g. filament colours)
+function build3MF(items,projectSettings){
   const enc=s=>new TextEncoder().encode(s),files=[];
   const NS='xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p"';
   let nextId=1;const rootObjs=[],buildItems=[],rels=[],cfg=[];
@@ -287,7 +394,9 @@ function build3MF(items){
     const oid=nextId++;
     rootObjs.push(`<object id="${oid}" p:UUID="${uuid4()}" type="model"><components>`+
       parts.map(p=>`<component p:path="${path}" objectid="${p.id}" p:UUID="${uuid4()}" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>`).join("")+`</components></object>`);
-    buildItems.push(`<item objectid="${oid}" p:UUID="${uuid4()}" transform="1 0 0 0 1 0 0 0 1 ${+it.x.toFixed(3)} ${+it.y.toFixed(3)} 0" printable="1"/>`);
+    // rot: rotation about z (radians, counter-clockwise); 3MF uses row vectors: [x y z 1]·M
+    const rc=Math.cos(it.rot||0),rs=Math.sin(it.rot||0),f=v=>+(Math.abs(v)<1e-12?0:v).toFixed(6);
+    buildItems.push(`<item objectid="${oid}" p:UUID="${uuid4()}" transform="${f(rc)} ${f(rs)} 0 ${f(-rs)} ${f(rc)} 0 0 0 1 ${+it.x.toFixed(3)} ${+it.y.toFixed(3)} 0" printable="1"/>`);
     cfg.push(`  <object id="${oid}">\n    <metadata key="name" value="${xmlEsc(it.name)}"/>\n    <metadata key="extruder" value="${parts[0]?parts[0].extruder:1}"/>\n`+
       parts.map(p=>`    <part id="${p.id}" subtype="normal_part">\n      <metadata key="name" value="${xmlEsc(p.name)}"/>\n      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n      <metadata key="extruder" value="${p.extruder}"/>\n    </part>`).join("\n")+`\n  </object>`);
   });
@@ -296,6 +405,7 @@ function build3MF(items){
   files.unshift({name:"_rels/.rels",data:enc(`<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n</Relationships>\n`)});
   files.unshift({name:"[Content_Types].xml",data:enc(`<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n<Default Extension="config" ContentType="text/xml"/>\n</Types>\n`)});
   files.push({name:"Metadata/model_settings.config",data:enc(`<?xml version="1.0" encoding="UTF-8"?>\n<config>\n${cfg.join("\n")}\n</config>\n`)});
+  if(projectSettings)files.push({name:"Metadata/project_settings.config",data:enc(JSON.stringify(projectSettings,null,4))});
   return makeZipAsync(files);
 }
 // grid layout on a square plate, centred

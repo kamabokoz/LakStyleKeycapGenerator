@@ -29,13 +29,31 @@ function applySharedHash(){
   try{const r=decodeParams(m[1]);P=r.p;sharedNotice="共有リンクのパラメータを読み込みました"+(r.n?"（"+r.n+"）":"")+"。";}
   catch(e){sharedNotice="共有リンクのパラメータを読み込めませんでした。";}
 }
-function showSharedNotice(){if(!sharedNotice)return;const box=document.getElementById("msgs");const d=document.createElement("div");d.className="msg info";d.textContent=sharedNotice;box.prepend(d);setTimeout(()=>{sharedNotice="";},0);}
+// the settings that were on screen before a shared link replaced them (same tab), for "元に戻す"
+let beforeLink=null;
+function showSharedNotice(){if(!sharedNotice)return;const box=document.getElementById("msgs");const d=document.createElement("div");d.className="msg info";
+  const t=document.createElement("span");t.textContent=sharedNotice;d.appendChild(t);
+  if(beforeLink){const prev=beforeLink,b=document.createElement("button");b.type="button";b.className="linkbtn";b.style.cssText="display:inline;padding:0 0 0 8px";b.textContent="元に戻す";
+    b.onclick=()=>{P=cleanParams(prev,DEF);for(const k in resets)delete resets[k];buildForm();update();beforeLink=null;
+      const m=document.createElement("div");m.className="msg info";m.textContent="共有リンクを開く前の設定に戻しました。";document.getElementById("msgs").prepend(m);};
+    d.appendChild(b);}
+  box.prepend(d);setTimeout(()=>{sharedNotice="";},0);}
+// keep the current settings in the history before a shared link overwrites them
+function backupBeforeLink(prev){
+  beforeLink=prev;
+  if(JSON.stringify(prev)===JSON.stringify(DEF))return false;     // nothing of the user's to keep
+  if(Store.mode!=="db"&&Store.mode!=="local")return false;
+  addItem("history",{filename:"",quality:prev.quality,params:prev,createdAt:Date.now(),note:"共有リンクを開く前の設定"}).catch(er=>libStatus(dbErr(er)));
+  return true;
+}
 
 // --- preview card image ---
-function snapshot(v,w,h){
+// cam: {yaw, el, span} — the angle chosen in the viewer (the current view's meshes are used as they are)
+function snapshot(v,w,h,cam){
   const saved={W,H,yaw,el,span,ty,te,ts,view,cw:cv.width,ch:cv.height,gw:glc.width,gh:glc.height};
   W=w;H=h;cv.width=w;cv.height=h;ctx.setTransform(1,0,0,1,0,0);glc.width=w;glc.height=h;
-  const pv=VIEWS[v];yaw=ty=pv[0];el=te=pv[1];span=ts=(v==="iso"?27:pv[2]);view=v;
+  if(cam){yaw=ty=cam.yaw;el=te=cam.el;span=ts=cam.span;}
+  else{const pv=VIEWS[v];yaw=ty=pv[0];el=te=pv[1];span=ts=(v==="iso"?27:pv[2]);view=v;}
   render();
   const off=document.createElement("canvas");off.width=w;off.height=h;const o=off.getContext("2d");
   if(v!=="section"&&GLR)o.drawImage(glc,0,0);
@@ -59,7 +77,7 @@ async function makeCard(title){
   const Wc=1200,Hc=675,c=document.createElement("canvas");c.width=Wc;c.height=Hc;const g=c.getContext("2d");
   g.fillStyle="#E6EAED";g.fillRect(0,0,Wc,Hc);
   g.fillStyle="#D3D9DE";roundRect(g,28,28,700,619,22);g.fill();
-  const iso=snapshot("iso",700,619);g.drawImage(iso,28,28);
+  const iso=snapshot(view,700,619,{yaw:ty,el:te,span:ts});g.drawImage(iso,28,28);
   g.fillStyle="#F4F6F7";roundRect(g,752,28,420,619,22);g.fill();
   const F='"IBM Plex Sans JP","Hiragino Sans","Noto Sans JP",sans-serif';
   g.fillStyle="#1C252D";g.font="600 32px "+F;const nl=wrapText(g,title||"LAK風キーキャップ",780,84,370,40,2);
@@ -80,11 +98,22 @@ function defaultShareText(name){
   const L=paramLines(P);
   return "LAK風キーキャップジェネレータで作りました。\n"+(name?"「"+name+"」\n":"")+L.slice(1,4).map(([k,v])=>k+" "+v).join("・")+"\n#自作キーボード #LAKキーキャップ #LAK風キーキャップジェネレータ";
 }
+// the name is the heading of the posted image, goes into the post text and into the link
+function setShareName(v){
+  const prev=shareName,name=String(v||"").replace(/\s+/g," ").trim().slice(0,40);if(name===prev)return;shareName=name;
+  const ta=document.getElementById("share-text"),t=ta.value;
+  if(t===defaultShareText(prev))ta.value=defaultShareText(name);                        // untouched text: rewrite it
+  else if(prev&&t.includes("「"+prev+"」"))ta.value=name?t.replace("「"+prev+"」","「"+name+"」"):t.replace("「"+prev+"」\n","").replace("「"+prev+"」","");
+  else if(!prev&&name&&t.startsWith("LAK風キーキャップジェネレータで作りました。\n"))ta.value=t.replace("LAK風キーキャップジェネレータで作りました。\n","LAK風キーキャップジェネレータで作りました。\n「"+name+"」\n");
+  refreshShareLink();scheduleCard(500);
+}
 function intentUrl(text,url){return "https://twitter.com/intent/tweet?text="+encodeURIComponent(text)+(url?"&url="+encodeURIComponent(url):"");}
 async function openShare(name){
   shareName=name||"";
   const dlg=document.getElementById("share-dlg");dlg.hidden=false;document.body.style.overflow="hidden";
   const st=document.getElementById("share-st");st.textContent="プレビュー画像を作っています…";
+  shareViewerOpen();
+  document.getElementById("share-name").value=shareName;
   document.getElementById("share-text").value=defaultShareText(shareName);
   document.getElementById("share-base").value=(()=>{try{return localStorage.getItem(SHARE_KEY)||"";}catch(_){return"";}})();
   refreshShareLink();
@@ -98,7 +127,37 @@ async function openShare(name){
   st.textContent=canFiles?"「Xアプリで共有」を押すと、画像と文章をまとめてXに渡せます。":"画像をコピー（または保存）してから投稿画面を開き、貼り付けてください。";
   document.getElementById("share-text").focus();
 }
-function closeShare(){document.getElementById("share-dlg").hidden=true;document.body.style.overflow="";}
+// ---- the live viewer inside the dialog: adjust the angle of the posted image ----
+var shareViewerOn=false;let cardTimer=0,cardBusy=false,cardAgain=false;
+function shareViewerOpen(){
+  if(typeof hidePip==="function")hidePip(true);
+  const st=document.querySelector(".stage");st.style.minHeight=st.offsetHeight+"px";
+  document.getElementById("share-vw").appendChild(vw);shareViewerOn=true;
+  if(view==="section")document.querySelector('.views button[data-view="iso"]').click();
+  resize();buildShareViews();dirty=true;
+}
+function shareViewerClose(){
+  if(!shareViewerOn)return;shareViewerOn=false;const st=document.querySelector(".stage");
+  st.insertBefore(vw,st.firstChild);st.style.minHeight="";resize();dirty=true;
+}
+function buildShareViews(){
+  const box=document.getElementById("share-views");box.innerHTML="";
+  document.querySelectorAll(".views:not(.lib-tabs) button").forEach(mb=>{const v=mb.dataset.view;if(v==="section"||v==="bottom"||mb.hidden)return;
+    const b=document.createElement("button");b.type="button";b.textContent=mb.textContent;b.setAttribute("aria-pressed",String(view===v));
+    b.onclick=()=>{mb.click();buildShareViews();scheduleCard(WIDE(v)?900:400);};box.appendChild(b);});
+  const top=document.createElement("button");top.type="button";top.textContent="真上";top.setAttribute("aria-pressed","false");
+  top.onclick=()=>{te=1.5;ty=0;scheduleCard();};box.appendChild(top);
+}
+// rebuild the posted image a moment after the viewer stops moving
+function scheduleCard(delay){if(!shareViewerOn)return;clearTimeout(cardTimer);cardTimer=setTimeout(refreshCard,delay||450);
+  document.getElementById("share-st").textContent="投稿画像を更新しています…";}
+async function refreshCard(){
+  if(!shareViewerOn)return;if(cardBusy){cardAgain=true;return;}cardBusy=true;
+  try{shareBlob=await makeCard(shareName);if(shareObjUrl)URL.revokeObjectURL(shareObjUrl);shareObjUrl=URL.createObjectURL(shareBlob);
+    document.getElementById("share-img").src=shareObjUrl;document.getElementById("share-st").textContent="投稿画像を更新しました。";}
+  finally{cardBusy=false;if(cardAgain){cardAgain=false;refreshCard();}}
+}
+function closeShare(){clearTimeout(cardTimer);shareViewerClose();document.getElementById("share-dlg").hidden=true;document.body.style.overflow="";}
 function refreshShareLink(){
   const url=shareUrl(P,shareName),box=document.getElementById("share-link");
   box.value=url||"";box.placeholder="公開先URLを設定すると、パラメータ付きのリンクが入ります";
@@ -107,13 +166,24 @@ function refreshShareLink(){
   document.getElementById("share-nobase").hidden=!!url;
 }
 function initShare(){
-  window.addEventListener("hashchange",()=>{const before=JSON.stringify(P);applySharedHash();
-    if(JSON.stringify(P)!==before){for(const k in resets)delete resets[k];buildForm();update();}showSharedNotice();});
+  const z=f=>()=>{ts=Math.min(WIDE(view)?viewSpan(view)*2:120,Math.max(8,ts*f));scheduleCard();};
+  document.getElementById("share-zin").onclick=z(0.85);document.getElementById("share-zout").onclick=z(1/0.85);
+  document.getElementById("share-vreset").onclick=()=>{const v=VIEWS[view]||VIEWS.iso;ty=v[0];te=v[1];ts=viewSpan(view);scheduleCard();};
+  cv.addEventListener("pointerup",()=>scheduleCard());
+  cv.addEventListener("wheel",()=>scheduleCard(600),{passive:true});
+  window.addEventListener("hashchange",()=>{const prev={...P},before=JSON.stringify(P);applySharedHash();
+    if(JSON.stringify(P)!==before){
+      const saved=backupBeforeLink(prev);
+      if(sharedNotice&&!/読み込めません/.test(sharedNotice))sharedNotice+=saved?" それまでの設定は保存履歴に残しました。":" ";
+      for(const k in resets)delete resets[k];buildForm();update();}
+    else beforeLink=null;
+    showSharedNotice();});
   document.getElementById("share-x").onclick=()=>openShare("");
   document.getElementById("share-close").onclick=closeShare;
   document.getElementById("share-dlg").addEventListener("click",e=>{if(e.target.id==="share-dlg")closeShare();});
   document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!document.getElementById("share-dlg").hidden)closeShare();});
   document.getElementById("share-text").addEventListener("input",refreshShareLink);
+  document.getElementById("share-name").addEventListener("input",e=>setShareName(e.target.value));
   document.getElementById("share-base").addEventListener("change",e=>{
     let v=e.target.value.trim();if(v&&!/^https:\/\//.test(v)){document.getElementById("share-st").textContent="公開先URLは https:// から始まるURLにしてください。";return;}
     try{if(v)localStorage.setItem(SHARE_KEY,v.split("#")[0]);else localStorage.removeItem(SHARE_KEY);}catch(_){}

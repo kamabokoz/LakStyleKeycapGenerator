@@ -156,10 +156,12 @@ const LEG=(()=>{
   function triangulate(shape,steiner){const raw=bridge(shape.outer,shape.holes.concat((steiner||[]).map(p=>[p])));
     const w=weld(raw,earclip(raw));return{poly:w.poly,tris:flip(w.poly,w.tris)};}
   // --- extrusion conforming to a surface z(x,y) ---
-  function extrude(shapes,zb,zt,m){
+  // refine: {len, pred} — split the faces where the surface bends (see stepRefine)
+  function extrude(shapes,zb,zt,m,refine){
     const T=[];
     for(const s of shapes){
-      const {poly,tris}=triangulate(s);
+      let {poly,tris}=triangulate(s);
+      if(refine&&typeof refineZone==="function"){const r=refineZone(poly,tris,s.outer,s.holes,refine);poly=r.poly;tris=r.tris;}
       const top=poly.map(p=>[p[0],p[1],zt(p[0],p[1])]),bot=poly.map(p=>[p[0],p[1],zb(p[0],p[1])]);
       for(const [a,b,c] of tris){T.push([top[a],top[b],top[c],m]);T.push([bot[a],bot[c],bot[b],m]);}
       for(const ring of [s.outer,...s.holes]){
@@ -232,5 +234,5 @@ const LEG=(()=>{
   }
   // small preview image (for lists and the key map)
   async function svgThumb(src,px){const {root,aspect}=svgPrepare(src);const w=aspect>=1?px:Math.round(px*aspect),h=aspect>=1?Math.round(px/aspect):px;return svgImage(root,Math.max(1,w),Math.max(1,h));}
-  return{contours,group,triangulate,extrude,textShapes,svgShapes,svgThumb,svgPrepare,area,rdpClosed,PX};
+  return{contours,group,triangulate,extrude,flip,textShapes,svgShapes,svgThumb,svgPrepare,svgImage,area,rdpClosed,PX};
 })();
