@@ -37,7 +37,7 @@ function homingEdited(k){
   if(msg||sw){drawMap();renderEditor();saveWs();}   // only when something changed (sliders call this on every tick)
 }
 function setHomingMaster(on){P.homing=on;const i=inputs.homing;if(i&&i.check)i.check.checked=on;}
-const EDEF={format:"stl",bodyExt:1,legendExt:2,plate:256,legendMode:"one",layerExt:{},arrange:"auto",filColors:{},colors3mf:false};
+const EDEF={format:"stl",bodyExt:1,legendExt:2,trayExt:1,lidExt:1,winExt:3,tray:{},plate:256,legendMode:"one",layerExt:{},arrange:"auto",filColors:{},colors3mf:false};
 // ---- filament colours (preview + 3MF) ----
 const FIL_DEF=["#D8D5CD","#3A3E44","#28806E","#D66230","#3A6CC4","#B43E82","#CCA424","#BA3434","#7A4FB0","#3FA34D","#E0A0B0","#5B6B78","#8C6239","#20A0C0","#F0D060","#FFFFFF"];
 function filColor(n){const v=EXP.filColors&&EXP.filColors[n];return /^#[0-9a-f]{6}$/i.test(v||"")?v.toUpperCase():FIL_DEF[(n-1+16)%16];}
@@ -237,9 +237,12 @@ async function legendParts(pos,offx,N,M){
   const body=eng?buildMesh(Q,N,M,offx,{shapes,depth:LCFG.depth}):buildMesh(Q,N,M,offx);
   return{body,legend,legendBy,art,dropped};
 }
+// pins needed for the homing holes among these keys
+function homingPinCount(list){return P.homing&&homingSpec(P).mode===2?list.filter(p=>KEYHOME[p]).length:0;}
 // does the homing bump touch any legend of this key?
 function homingHitsLegend(shapes){
   if(!shapes.length)return false;
+  if(homingSpec(P).mode)return homingTouches(P,shapes);
   const S=homingSpec(P),L=Math.max(0,S.len-S.w),m=S.r+0.3;
   const dSeg=(x,y)=>{const t=Math.max(-L/2,Math.min(L/2,x-S.x));return Math.hypot(x-S.x-t,y-S.y);};
   for(const l of loopsOf(shapes))for(let i=0;i<l.length;i++){const a=l[i],b=l[(i+1)%l.length];
@@ -597,6 +600,7 @@ function renderKmButtons(){
   document.getElementById("km-disconnect").hidden=!client;
   document.getElementById("km-reload").hidden=!client;
   const wb=document.querySelector('.views button[data-view="all"]');if(wb){wb.hidden=!loaded;if(!loaded&&view==="all")document.querySelector('.views button[data-view="iso"]').click();}
+  const tb=document.querySelector('.views button[data-view="tray"]');if(tb){const keep=typeof outTarget==="function"&&outTarget()==="tray";tb.hidden=!loaded&&!keep;if(tb.hidden&&view==="tray")document.querySelector('.views button[data-view="iso"]').click();else if(view==="tray"&&typeof trayDirty==="function")trayDirty();}
   const sb=document.querySelector('.views button[data-view="sizes"]');if(sb&&!loaded){sb.hidden=true;if(view==="sizes")document.querySelector('.views button[data-view="iso"]').click();}
 }
 function renderKm(){renderKmButtons();drawMap();renderEditor();}
@@ -798,6 +802,7 @@ async function exportLegendKeys(onlySel){
       scadRows.push("    [ // "+(pos+1)+"\n"+slotsOf(pos).map(s=>{if(s.svg&&SVGS[s.svg])return null;const t=slotShown(s,pos);if(!t)return null;const b=slotBoxFor(s,multi);
         return "      ["+JSON.stringify(t)+", "+fmt(b.cx)+", "+fmt(b.cy)+", "+fmt(b.size)+", "+(layerWeight(s.layer)>=700?"true":"false")+"]";}).filter(Boolean).join(",\n")+"\n    ]");
     }
+    const np=homingPinCount(list);if(np)files.push({name:"homing_pins.stl",data:toSTL(homingPins(P,np))});
     files.push({name:"engraved.scad",data:new TextEncoder().encode(engraveScad(scadRows,list))});
     files.push({name:"keymap.json",data:new TextEncoder().encode(JSON.stringify({format:"lak-keymap/1",device:KM.device,layers:KM.layers,behaviors:KM.behaviors,keys:KM.keys,legendConfig:LCFG,keyConfig:KEYCFG,homingKeys:Object.keys(KEYHOME).map(Number),svgs:SVGS,art:ART}))});
     st.textContent="ZIPにまとめています…";await new Promise(r=>setTimeout(r,0));
@@ -824,6 +829,12 @@ async function export3MF(list,st){
     items.push({name:String(k+1).padStart(2,"0")+"_"+(main||"key"),x:pos[n].x,y:pos[n].y,rot:pos[n].rot,
       parts:[{name:"body",tris:parts.body,extruder:EXP.bodyExt},...lp,...parts.art.map(a=>({name:"art_"+a.name,tris:a.tris,extruder:a.ext}))]});
   }
+  // pins for the homing holes: one object beside the keys (in front of them if there is room, otherwise behind)
+  const np=homingPinCount(list);
+  if(np){const half=P.pitch/2;let y0=Infinity,y1=-Infinity,x0=Infinity;for(const p of pos.slice(0,list.length)){y0=Math.min(y0,p.y-half);y1=Math.max(y1,p.y+half);x0=Math.min(x0,p.x-half);}
+    const S=homingSpec(P),g=Math.max(4,S.holeD+3),c=Math.ceil(Math.sqrt(np)),w=c*g,h=Math.ceil(np/c)*g;
+    const y=y0-4-h/2>=2+h/2?y0-4-h/2:Math.min(EXP.plate-2-h/2,y1+4+h/2),x=Math.max(2+w/2,x0+w/2);
+    items.push({name:"homing_pins",x,y,rot:0,parts:[{name:"pin",tris:homingPins(P,np),extruder:EXP.bodyExt}]});}
   st.textContent="3MFにまとめています…";await new Promise(r=>setTimeout(r,0));
   // filament colours for the slicer (1..highest filament in use)
   let extra=null;

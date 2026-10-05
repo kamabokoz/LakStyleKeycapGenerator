@@ -15,6 +15,15 @@
 <meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
+<div class="share-dlg" id="draft-dlg" hidden role="alertdialog" aria-modal="true" aria-labelledby="draft-title" aria-describedby="draft-text">
+  <div class="share-box draft-box">
+    <div class="share-head"><h2 id="draft-title">編集中の形状パラメータがあります</h2></div>
+    <p id="draft-text" class="draft-text"></p>
+    <ul id="draft-list" class="draft-list"></ul>
+    <div class="km-btns draft-acts"><button type="button" id="draft-load" class="primary">読み込む</button><button type="button" id="draft-skip" class="ghost">初期値で始める</button></div>
+    <p class="hint" id="draft-note"></p>
+  </div>
+</div>
 <div class="share-dlg" id="share-dlg" hidden role="dialog" aria-modal="true" aria-labelledby="share-title">
   <div class="share-box">
     <div class="share-head"><h2 id="share-title">Xに投稿</h2><button type="button" id="share-close" aria-label="閉じる">×</button></div>
@@ -25,7 +34,7 @@
       <div class="share-btns share-zoom">
         <button type="button" id="share-zin">拡大</button><button type="button" id="share-zout">縮小</button><button type="button" id="share-vreset">向きを戻す</button>
       </div>
-      <p class="hint" style="padding:6px 0 8px">ドラッグで回転、ホイール（または拡大・縮小ボタン）で大きさを変えられます。操作をやめると、少しして投稿画像に反映されます。</p>
+      <p class="hint" style="padding:6px 0 8px">ドラッグで回転、右ドラッグ（またはShift＋ドラッグ）で移動、ホイール（または拡大・縮小ボタン）で大きさを変えられます。操作をやめると、少しして投稿画像に反映されます。</p>
     </details>
     <label class="share-lab" for="share-name">キーキャップの名前（画像の見出し）</label>
     <input id="share-name" class="share-name" maxlength="40" placeholder="LAK風キーキャップ" autocomplete="off">
@@ -86,7 +95,7 @@
     </div>
   </header>
   <div class="view-col">
-    <div class="stage"><div class="vw" id="vw"><canvas id="gl" aria-hidden="true"></canvas><canvas id="cv" aria-label="キーキャップの3Dプレビュー。ドラッグで回転"></canvas></div><div class="stage-note" id="stage-note" hidden></div></div>
+    <div class="stage"><div class="vw" id="vw"><canvas id="gl" aria-hidden="true"></canvas><canvas id="cv" aria-label="キーキャップの3Dプレビュー。ドラッグで回転、右ドラッグで移動、ダブルクリックで中央に戻す"></canvas></div><div class="stage-note" id="stage-note" hidden></div></div>
     <div class="views" role="group" aria-label="表示">
       <button data-view="iso" aria-pressed="true">斜め</button>
       <button data-view="side" aria-pressed="false">横</button>
@@ -95,6 +104,7 @@
       <button data-view="section" aria-pressed="false">断面</button>
       <button data-view="all" aria-pressed="false" hidden>全体</button>
       <button data-view="sizes" aria-pressed="false" hidden>サイズ見本</button>
+      <button data-view="tray" aria-pressed="false" hidden>トレー</button>
     </div>
     <div class="filbar" id="fil-bar" aria-label="フィラメント"></div>
     <dl class="stats">
@@ -171,6 +181,7 @@
         <div id="out-target"></div>
         <div id="km-exfmt"></div>
         <div id="km-sizes" hidden></div>
+        <div id="tray-form" hidden></div>
         <div id="out-fil"></div>
       </div>
     </section>
@@ -181,6 +192,7 @@
         <div class="status" id="status" aria-live="polite"></div>
         <p class="km-status" id="km-exst" aria-live="polite" hidden></p>
         <p class="km-status" id="sz-st" aria-live="polite" hidden></p>
+        <p class="km-status" id="tray-st" aria-live="polite" hidden></p>
       </div>
       <button type="button" id="out-save" class="primary">保存</button>
       <button type="button" id="save" hidden>STLを保存</button>
@@ -204,6 +216,7 @@
 <script src="js/art.js"></script>
 <script src="js/sample.js"></script>
 <script src="js/overview.js"></script>
+<script src="js/tray.js"></script>
 <script src="js/layout.js"></script>
 <script src="js/main.js"></script>
 </body>

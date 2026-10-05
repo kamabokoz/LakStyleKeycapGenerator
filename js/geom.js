@@ -226,7 +226,9 @@ function buildMesh(P,N,M,offx,opts){
   const mv=p=>[p[0]+offx,p[1],p[2]];
   const ins=insetList(P,D);
   const rings=ins.map(q=>rr(P.top_size-2*q[0],ringR(q[0],P,D),N,0.8).map(p=>[p[0],p[1],ztop(p[0],p[1],q[0],q[1],P,D)]));
-  const pocket=opts&&opts.shapes&&opts.shapes.length?opts:null;
+  let pocket=opts&&opts.shapes&&opts.shapes.length?opts:null;
+  // homing as a recess or a pin hole: one more pocket with its own depth (left out if it would touch a legend)
+  if(P.homing){const hc=homingCutShape(P,D);if(hc&&!(pocket&&homingTouches(P,pocket.shapes)))pocket={depth:pocket?pocket.depth:0,shapes:(pocket?pocket.shapes:[]).concat([hc])};}
   let k0=rings.length-1,topT=null,bandT=null;const KB=4,noZip=new Set();
   if(pocket){
     k0=plateauRingIndex(P,D);
@@ -253,6 +255,7 @@ function buildMesh(P,N,M,offx,opts){
   chain.push(rr(D.base-2*P.wall,Math.max(P.r_base-P.wall,0.3),N).map(p=>[p[0],p[1],0]));mats.push(0);
   const itop=D.base-(D.base-P.top_size)*P.cavity_h/P.edge_h-2*P.wall;
   chain.push(rr(itop,Math.max(P.r_top-P.wall,0.3),N).map(p=>[p[0],p[1],P.cavity_h]));mats.push(0);
+  const kCeil=chain.length-1;
   const circ=z=>{const o=[];for(let i=0;i<M;i++){const t=i/M*2*Math.PI;o.push([P.stem_od/2*Math.cos(t),P.stem_od/2*Math.sin(t),z]);}return o;};
   chain.push(circ(P.cavity_h));mats.push(0);
   chain.push(circ(0));mats.push(1);
@@ -262,8 +265,12 @@ function buildMesh(P,N,M,offx,opts){
   else{chain.push(cp.map(p=>[p[0],p[1],0]));mats.push(1);}
   chain.push(cp.map(p=>[p[0],p[1],P.cross_depth]));mats.push(2);
   chain.push([[0,0,P.cross_depth]]);mats.push(2);
+  // a through slot for the homing insert: the ceiling gets a counterbore, the slot's walls (from pocketTop) end at its roof
+  const thru=pocket&&pocket.shapes.find(s=>s.thru);
+  if(thru)noZip.add(kCeil);
   let T=[];
   for(let k=0;k<chain.length-1;k++){if(noZip.has(k))continue;zipRings(chain[k].map(mv),chain[k+1].map(mv),T,mats[k+1]);}
+  const CT=thru?homingCeiling(P,chain[kCeil],chain[kCeil+1],thru,offx):[];
   if(topT){
     // make the chain consistent with the top faces (which use up-facing normals, ring traversed CCW)
     const R=rings[k0].map(mv),a=R[0],b=R[1],eq=(p,q)=>p[0]===q[0]&&p[1]===q[1]&&p[2]===q[2];
@@ -271,20 +278,103 @@ function buildMesh(P,N,M,offx,opts){
     if(same)for(const t of T){const x=t[1];t[1]=t[2];t[2]=x;}
     T=T.concat(topT,bandT||[]);
   }
+  T=T.concat(CT);
   orient(T);
   const parts=[T];
-  if(P.homing)parts.push(homingMesh(P,D,offx));
+  if(P.homing&&homingSpec(P).mode===0)parts.push(homingMesh(P,D,offx));
   return [].concat(...parts);
+}
+// the ceiling around a through slot, all faces facing out of the solid: the ceiling (down, with holes for the stem and
+// the counterbore), the counterbore's walls (facing into it) and its roof (down, with the slot as a hole)
+function homingCeiling(P,ceil,stem,slot,offx){
+  const S=homingSpec(P),cb=homingFlange(P,S),z0=P.cavity_h,z1=slot.fz,T=[],ccw=l=>LEG.area(l)>0?l:l.slice().reverse(),cw=l=>ccw(l).slice().reverse();
+  const put=(a,b,c,want)=>{const u=[b[0]-a[0],b[1]-a[1],b[2]-a[2]],v=[c[0]-a[0],c[1]-a[1],c[2]-a[2]],n=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]];
+    const sh=p=>[p[0]+offx,p[1],p[2]];T.push(n[0]*want[0]+n[1]*want[1]+n[2]*want[2]>=0?[sh(a),sh(b),sh(c),0]:[sh(a),sh(c),sh(b),0]);};
+  const face=(outer,holes,z)=>{const {poly,tris}=LEG.triangulate({outer:ccw(outer),holes:holes.map(cw)});const V=poly.map(p=>[p[0],p[1],z]);for(const [a,b,c] of tris)put(V[a],V[b],V[c],[0,0,-1]);};
+  face(ceil.map(p=>[p[0],p[1]]),[stem.map(p=>[p[0],p[1]]),cb],z0);
+  face(cb,[slot.outer],z1);
+  const l=ccw(cb);for(let i=0;i<l.length;i++){const p=l[i],q=l[(i+1)%l.length],nI=[-(q[1]-p[1]),q[0]-p[0],0]; // into the counterbore (left of a CCW edge)
+    put([p[0],p[1],z0],[q[0],q[1],z0],[q[0],q[1],z1],nI);put([p[0],p[1],z0],[q[0],q[1],z1],[p[0],p[1],z1],nI);}
+  return T;
 }
 // ---- homing bump ----
 // height of the finished top at (x,y) (plateau, step or outer band)
 function topZ(x,y,P,D){const d=-sdRR(x,y,P.top_size,P.r_top);return ztop(x,y,Math.max(d,0),d<P.edge_band,P,D);}
 // homing parameters with defaults for data saved before these existed
+// mode 0: a bump on the top / 1: a recess (groove or dimple) cut into the top / 2: a hole for an insert (glued in after printing)
+// ins (mode 2): 0 = a blind hole, the insert goes in from the top / 1 = a slot through the top with a counterbore in the
+//   ceiling underneath, the insert has a flange and goes in from inside the keycap (the flange sets the height; it can't come out on top)
+// up: how far it stands above the top (the bump, or the insert's rounded head); depth: the recess or the hole below the top
+const HOMING_FL={over:0.8,t:0.6,clr:0.15}; // flange: reach past the slot on each side, thickness, gap in the counterbore
 function homingSpec(P){
-  const n=(v,d)=>typeof v==="number"&&isFinite(v)?v:d;
-  const dot=P.homing_type==1,w=Math.max(0.2,n(P.homing_w,0.9));
-  return{dot,w,r:w/2,len:dot?w:Math.max(w,n(P.homing_len,4.9)),h:Math.max(0.05,n(P.homing_h,0.25)),x:n(P.homing_x,0),y:n(P.homing_y,-4),embed:0.3};
+  const n=(v,d)=>typeof v==="number"&&isFinite(v)?v:d,mode=[0,1,2].includes(+P.homing_mode)?+P.homing_mode:0;
+  const holeD=Math.max(0.6,n(P.homing_hole_d,1.9)),dot=P.homing_type==1,w=mode===2?holeD:Math.max(0.2,n(P.homing_w,0.9));
+  const h=Math.max(0.05,n(P.homing_h,0.25)),ins=mode===2&&+P.homing_ins===1?1:0;
+  return{mode,ins,dot,w,r:w/2,len:dot?w:Math.max(w,n(P.homing_len,4.9)),h,x:n(P.homing_x,0),y:n(P.homing_y,-4),embed:0.3,holeD,
+    clr:Math.min(0.4,Math.max(0,n(P.homing_pin_clr,0.1))),
+    depth:mode===1?Math.max(0.1,n(P.homing_depth,0.5)):mode===2?Math.max(0.3,n(P.homing_hole_depth,1.5)):0,up:mode===1?0:h};
 }
+// a capsule (bar) or circle (dot) outline, CCW
+function homingOutline(x,y,len,w,dot){
+  const r=w/2,L=dot?0:Math.max(0,len-w),o=[];
+  if(L<1e-6){const n=32;for(let i=0;i<n;i++){const a=i/n*2*Math.PI;o.push([x+r*Math.cos(a),y+r*Math.sin(a)]);}return o;}
+  const n=14;for(let i=0;i<=n;i++){const a=-Math.PI/2+i/n*Math.PI;o.push([x+L/2+r*Math.cos(a),y+r*Math.sin(a)]);}
+  for(let i=0;i<=n;i++){const a=Math.PI/2+i/n*Math.PI;o.push([x-L/2+r*Math.cos(a),y+r*Math.sin(a)]);}
+  return o;
+}
+// the lowest point of the top over an outline
+function homingTopMin(P,D,loop){let m=Infinity;for(const [x,y] of loop)m=Math.min(m,topZ(x,y,P,D));return m;}
+// the cut in the top (key-local): {outer, holes, depth} — a recess follows the top; a blind hole has a flat floor (fz);
+// a through slot runs down to the counterbore (fz, thru)
+function homingCutShape(P,D){
+  const S=homingSpec(P);if(!S.mode)return null;D=D||derive(P);
+  const o=homingOutline(S.x,S.y,S.len,S.w,S.dot),c={outer:o,holes:[],depth:S.depth};
+  if(S.mode===2){if(S.ins&&homingThruOk(P,D))return{...c,fz:P.cavity_h+HOMING_FL.t,thru:true};c.fz=homingTopMin(P,D,o)-S.depth;}
+  return c;
+}
+// the counterbore under a through slot (in the cavity ceiling): the slot grown by HOMING_FL.over, moved away from the
+// stem as far as needed (up to 0.1mm short of the slot's edge) so it keeps clear of it
+function homingCapDist(cx,cy,len,w,dot,px,py){const L=dot?0:Math.max(0,len-w)/2,t=Math.max(-L,Math.min(L,px-cx));return Math.hypot(px-cx-t,py-cy)-w/2;}
+function homingFlangeAt(P,S){
+  const g=HOMING_FL.over,d=Math.hypot(S.x,S.y)||1,ux=d>1e-6?S.x/d:0,uy=d>1e-6?S.y/d:-1,lim=P.stem_od/2+0.2;
+  for(let s=0;s<=g-0.1+1e-9;s+=0.05){const cx=S.x+ux*s,cy=S.y+uy*s;if(homingCapDist(cx,cy,S.len+2*g,S.w+2*g,S.dot,0,0)>=lim)return[cx,cy];}
+  return[S.x+ux*(g-0.1),S.y+uy*(g-0.1)];
+}
+function homingFlange(P,S,grow){S=S||homingSpec(P);const g=HOMING_FL.over+(grow||0),[cx,cy]=homingFlangeAt(P,S);return homingOutline(cx,cy,S.len+2*g,S.w+2*g,S.dot);}
+// "" if the through slot fits (flange inside the ceiling, clear of the stem, enough top left above it), else why not
+function homingThruCheck(P,D){
+  D=D||derive(P);const S=homingSpec(P),cb=homingFlange(P,S),itop=D.base-(D.base-P.top_size)*P.cavity_h/P.edge_h-2*P.wall,ri=Math.max(P.r_top-P.wall,0.3);
+  if(cb.some(([x,y])=>sdRR(x,y,itop,ri)>-0.3))return"つばが内側の天井からはみ出します";
+  const [fx,fy]=homingFlangeAt(P,S),g=HOMING_FL.over;
+  if(homingCapDist(fx,fy,S.len+2*g,S.w+2*g,S.dot,0,0)<P.stem_od/2+0.2-1e-6)return"つばがステムにかかります。中心から離してください";
+  if(homingTopMin(P,D,homingOutline(S.x,S.y,S.len,S.w,S.dot))-(P.cavity_h+HOMING_FL.t)<0.8)return"天面が薄く、つばの上に残る厚みが足りません";
+  return"";
+}
+function homingThruOk(P,D){return homingThruCheck(P,D)==="";}
+// is any outline (legends) within m of the homing, or the homing inside one?
+function homingTouches(P,shapes,m){
+  const S=homingSpec(P),L=S.dot?0:Math.max(0,S.len-S.w);m=S.r+(m===undefined?0.3:m);
+  const dSeg=(x,y)=>{const t=Math.max(-L/2,Math.min(L/2,x-S.x));return Math.hypot(x-S.x-t,y-S.y);};
+  const pip=(pt,poly)=>{let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if(((a[1]>pt[1])!==(b[1]>pt[1]))&&(pt[0]<(b[0]-a[0])*(pt[1]-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;};
+  for(const s of shapes)for(const l of [s.outer,...s.holes])for(let i=0;i<l.length;i++){const a=l[i],b=l[(i+1)%l.length];
+    for(let k=0;k<=4;k++){const x=a[0]+(b[0]-a[0])*k/4,y=a[1]+(b[1]-a[1])*k/4;if(dSeg(x,y)<m)return true;}}
+  return shapes.some(s=>pip([S.x,S.y],s.outer)&&!s.holes.some(h=>pip([S.x,S.y],h)));
+}
+// the insert for the hole, as printed (resting on z=0): a shank (the hole's shape, clr thinner) up to the top surface,
+// a rounded head standing h above it, and (from below) a flange under the shank. Overlapping closed shells.
+function homingPiece(P){
+  const D=derive(P),S=homingSpec(P),c=S.clr,thru=S.ins===1&&homingThruOk(P,D);
+  const sh=homingOutline(S.x,S.y,S.len-2*c,S.w-2*c,S.dot),top=(x,y)=>topZ(x,y,P,D);
+  const z0=thru?P.cavity_h+0.05:homingTopMin(P,D,homingOutline(S.x,S.y,S.len,S.w,S.dot))-S.depth+0.02,zs=thru?P.cavity_h+HOMING_FL.t-0.02:z0;
+  const T=[];
+  T.push(...orient(LEG.extrude([{outer:sh,holes:[]}],()=>zs,(x,y)=>top(x,y)-0.01,0)));
+  if(thru)T.push(...orient(LEG.extrude([{outer:homingFlange(P,S,-HOMING_FL.clr),holes:[]}],()=>z0,()=>P.cavity_h+HOMING_FL.t-0.05,0)));
+  T.push(...homingMesh({...P,homing_mode:0,homing_type:S.dot?1:0,homing_w:S.w-2*c,homing_len:S.len-2*c},D,0));
+  return T.map(t=>[...[0,1,2].map(k=>[t[k][0]-S.x,t[k][1]-S.y,t[k][2]-z0]),t[3]]);
+}
+// n inserts in rows (centred on the origin)
+function homingPins(P,n){const S=homingSpec(P),one=homingPiece(P),gx=Math.max(4,S.len+3+(S.ins?2*HOMING_FL.over:0)),gy=Math.max(4,S.w+3+(S.ins?2*HOMING_FL.over:0)),c=Math.max(1,Math.min(n,Math.ceil(Math.sqrt(n*gy/gx)))),T=[];
+  for(let i=0;i<n;i++){const x=(i%c-(c-1)/2)*gx,y=(Math.floor(i/c)-(Math.ceil(n/c)-1)/2)*gy;for(const t of one)T.push([...[0,1,2].map(k=>[t[k][0]+x,t[k][1]+y,t[k][2]]),t[3]]);}return T;}
 // capsule (bar) or sphere (dot) revolved around its long axis, bent to follow the top surface:
 // the upper half protrudes h above the surface, the lower half sinks `embed` into the body
 function homingMesh(P,D,offx){
@@ -321,10 +411,11 @@ function steinerPts(outer,holes,step,clear){
 function pocketTop(ring,shapes,depth,P,D,offx,o2){
   o2=o2||{};
   const zs=o2.zs||((x,y)=>zPlateau(x,y,P,D));
-  const loops=[];
-  for(const s of shapes){loops.push(s.outer);for(const h of s.holes)loops.push(h);}
+  const loops=[],dzs=[]; // a shape may carry its own depth (the homing recess)
+  const fzs=[],thrus=[]; // ...and a flat floor (fz), or no floor at all (thru: the walls go down to fz)
+  for(const s of shapes){const dz=s.depth>0?s.depth:depth;for(const l of [s.outer,...s.holes]){loops.push(l);dzs.push(dz);fzs.push(s.fz);thrus.push(!!s.thru);}}
   const pipf=(pt,poly)=>{let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const a=poly[i],b=poly[j];if(((a[1]>pt[1])!==(b[1]>pt[1]))&&(pt[0]<(b[0]-a[0])*(pt[1]-a[1])/(b[1]-a[1])+a[0]))c=!c;}return c;};
-  const info=loops.map(l=>({l:(LEG.area(l)>0?l:l.slice().reverse()),depth:1}));
+  const info=loops.map((l,i)=>({l:(LEG.area(l)>0?l:l.slice().reverse()),depth:1,dz:dzs[i],fz:fzs[i],thru:thrus[i]}));
   info.forEach((o,i)=>{o.depth=1+info.filter((q,j)=>j!==i&&pipf(o.l[0],q.l)).length;});
   const ring2=ring.map(p=>[p[0],p[1]]);const ringZ=new Map(ring.map(p=>[p[0]+","+p[1],p[2]]));
   if(o2.inner)for(const p of o2.inner)ringZ.set(p[0]+","+p[1],p[2]);
@@ -349,12 +440,13 @@ function pocketTop(ring,shapes,depth,P,D,offx,o2){
     let holes=kids(o).map(q=>q.l.slice().reverse());
     if(o===host&&o2.inner)holes=holes.concat([o2.inner.map(p=>[p[0],p[1]]).reverse()]);
     if(o.depth%2===0)face(o.l,holes,(x,y)=>{const z=ringZ.get(x+","+y);return z!==undefined?z:zs(x,y);},0,!o2.flat,o===root?o2.extra:null); // flat: a plane needs no extra points
-    else face(o.l,holes,(x,y)=>zs(x,y)-depth,m3);
+    else if(!o.thru)face(o.l,holes,o.fz!==undefined?()=>o.fz:(x,y)=>zs(x,y)-o.dz,m3);
   }
   for(const o of info){ // walls; loop is CCW. odd depth: air inside -> normal inward
-    const l=o.l,n=l.length,inward=o.depth%2===1;
+    const l=o.l,n=l.length,inward=o.depth%2===1,depth=o.dz;
     for(let i=0;i<n;i++){const p=l[i],q=l[(i+1)%n];
-      const pt=sh([p[0],p[1],zs(p[0],p[1])]),qt=sh([q[0],q[1],zs(q[0],q[1])]),pb=sh([p[0],p[1],zs(p[0],p[1])-depth]),qb=sh([q[0],q[1],zs(q[0],q[1])-depth]);
+      const zb=o.fz!==undefined?()=>o.fz:(x,y)=>zs(x,y)-depth;
+      const pt=sh([p[0],p[1],zs(p[0],p[1])]),qt=sh([q[0],q[1],zs(q[0],q[1])]),pb=sh([p[0],p[1],zb(p[0],p[1])]),qb=sh([q[0],q[1],zb(q[0],q[1])]);
       if(inward){T.push([pb,qt,qb,m3]);T.push([pb,pt,qt,m3]);}else{T.push([pb,qb,qt,m3]);T.push([pb,qt,pt,m3]);}}
   }
   return T;

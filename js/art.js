@@ -159,7 +159,7 @@ function artRegion(D,pr){
   const b0=P.edge_band-D.fil.Lf;                                       // vertical step: plateau + flat outer band
   return(x,y)=>plate(x,y)||(()=>{const v=d(x,y);return v>=ART_MARGIN&&v<=b0-ART_MARGIN;})();
 }
-function artCacheKey(pos){if(!artActive())return 0;const Q=paramsFor(pos);return[ARTV,ART.legend,ART.area,P.pitch,Q.homing?[P.homing_type,P.homing_len,P.homing_w,P.homing_x,P.homing_y]:0];}
+function artCacheKey(pos){if(!artActive())return 0;const Q=paramsFor(pos);return[ARTV,ART.legend,ART.area,P.pitch,Q.homing?[P.homing_type,P.homing_len,P.homing_w,P.homing_x,P.homing_y,P.homing_mode,P.homing_hole_d]:0];}
 
 // ===== UI =====
 let artDrag=null,artView=null,artNums={};const ART_ROT_OFF=22;

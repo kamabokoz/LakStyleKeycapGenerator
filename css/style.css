@@ -276,3 +276,19 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid
   html{scroll-padding-bottom:150px}
 }
 #km-legend>:first-child,#km-art>:first-child,#km-exfmt>.seg:first-child{border-top:0}
+.tray-names{display:grid;gap:6px;margin:4px 0}
+.tray-name{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:8px;align-items:center}
+.tray-name input{font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);min-width:0}
+.tray-name.sel input{border-color:var(--accent)}
+.tray-name-no{font:inherit;font-size:13px;font-weight:600;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--muted);cursor:pointer}
+.tray-name-no[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.tray-name .danger{font:inherit;font-size:13px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--err);padding:5px 10px;cursor:pointer}
+.tray-name-opts{background:var(--bg);border-radius:10px;padding:2px 12px 6px;margin:6px 0}
+.tray-art select{font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+
+/* the "load the parameters being edited last time?" dialog */
+.draft-box{width:min(100%,460px)}
+.draft-text{font-size:14px;margin:6px 0 4px;line-height:1.6}
+.draft-list{margin:0 0 10px;padding-left:1.2em;font-size:13px;color:var(--muted);line-height:1.7}
+.draft-acts{padding:4px 0 2px}
+#draft-dlg{z-index:90}

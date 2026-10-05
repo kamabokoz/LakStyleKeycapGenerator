@@ -24,10 +24,13 @@ function shareBase(){
 }
 function shareUrl(p,name){const b=shareBase();return b?b.split("#")[0]+"#k="+encodeParams(p,name):"";}
 let sharedNotice="";
+let openedFromLink=false;
 function applySharedHash(){
   const m=/[#&]k=([A-Za-z0-9_-]+)/.exec(location.hash||"");if(!m)return;
-  try{const r=decodeParams(m[1]);P=r.p;sharedNotice="共有リンクのパラメータを読み込みました"+(r.n?"（"+r.n+"）":"")+"。";}
+  try{const r=decodeParams(m[1]);P=r.p;openedFromLink=true;sharedNotice="共有リンクのパラメータを読み込みました"+(r.n?"（"+r.n+"）":"")+"。";}
   catch(e){sharedNotice="共有リンクのパラメータを読み込めませんでした。";}
+  // the link has been read: take it out of the address, or a reload would put the link's values back over the edits since
+  try{history.replaceState(null,"",location.href.split("#")[0]);}catch(_){}
 }
 // the settings that were on screen before a shared link replaced them (same tab), for "元に戻す"
 let beforeLink=null;
@@ -50,7 +53,8 @@ function backupBeforeLink(prev){
 // --- preview card image ---
 // cam: {yaw, el, span} — the angle chosen in the viewer (the current view's meshes are used as they are)
 function snapshot(v,w,h,cam){
-  const saved={W,H,yaw,el,span,ty,te,ts,view,cw:cv.width,ch:cv.height,gw:glc.width,gh:glc.height};
+  const saved={W,H,yaw,el,span,ty,te,ts,view,pan:pan.slice(),cw:cv.width,ch:cv.height,gw:glc.width,gh:glc.height};
+  if(!cam)pan=[0,0,0]; // a preset view is centred; the current camera keeps its position
   W=w;H=h;cv.width=w;cv.height=h;ctx.setTransform(1,0,0,1,0,0);glc.width=w;glc.height=h;
   if(cam){yaw=ty=cam.yaw;el=te=cam.el;span=ts=cam.span;}
   else{const pv=VIEWS[v];yaw=ty=pv[0];el=te=pv[1];span=ts=(v==="iso"?27:pv[2]);view=v;}
@@ -58,7 +62,7 @@ function snapshot(v,w,h,cam){
   const off=document.createElement("canvas");off.width=w;off.height=h;const o=off.getContext("2d");
   if(v!=="section"&&GLR)o.drawImage(glc,0,0);
   o.drawImage(cv,0,0);
-  W=saved.W;H=saved.H;yaw=saved.yaw;el=saved.el;span=saved.span;ty=saved.ty;te=saved.te;ts=saved.ts;view=saved.view;
+  pan=saved.pan;W=saved.W;H=saved.H;yaw=saved.yaw;el=saved.el;span=saved.span;ty=saved.ty;te=saved.te;ts=saved.ts;view=saved.view;
   resize();dirty=true;
   return off;
 }
@@ -168,7 +172,7 @@ function refreshShareLink(){
 function initShare(){
   const z=f=>()=>{ts=Math.min(WIDE(view)?viewSpan(view)*2:120,Math.max(8,ts*f));scheduleCard();};
   document.getElementById("share-zin").onclick=z(0.85);document.getElementById("share-zout").onclick=z(1/0.85);
-  document.getElementById("share-vreset").onclick=()=>{const v=VIEWS[view]||VIEWS.iso;ty=v[0];te=v[1];ts=viewSpan(view);scheduleCard();};
+  document.getElementById("share-vreset").onclick=()=>{const v=VIEWS[view]||VIEWS.iso;ty=v[0];te=v[1];ts=viewSpan(view);panReset();scheduleCard();};
   cv.addEventListener("pointerup",()=>scheduleCard());
   cv.addEventListener("wheel",()=>scheduleCard(600),{passive:true});
   window.addEventListener("hashchange",()=>{const prev={...P},before=JSON.stringify(P);applySharedHash();

@@ -5,11 +5,11 @@ const BUILD="standalone";
 // defaults = shape close to the original LAK
 const DEF={pitch:17,gap:1,top_size:16,edge_h:3.5,r_base:0.5,r_top:0.5,boundary:0,dome:-0.6,dome_scope:1,edge_drop:2.8,edge_band:0.75,step_run:1,step_rs:1,step_rf:0.6,r_plateau:1.8,dome_type:1,
   wall:1.2,cavity_h:2.6,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,
-  homing_type:0,homing_len:5,homing_w:0.9,homing_h:0.3,homing_y:-4,homing_x:0,quality:1};
+  homing_type:0,homing_len:5,homing_w:0.9,homing_h:0.3,homing_y:-4,homing_x:0,homing_mode:0,homing_depth:0.5,homing_hole_d:1.9,homing_hole_depth:1.5,homing_ins:0,homing_pin_clr:0.1,quality:1};
 // values of the earlier defaults: used to fill keys missing from older saved data and v1 share links
 const LEGACY_DEF={pitch:17,gap:1,top_size:14.2,edge_h:4.2,r_base:1.2,r_top:2,boundary:0,dome:0.4,dome_scope:0,edge_drop:0.5,edge_band:2,step_run:0,step_rs:0,step_rf:0,r_plateau:0.3,dome_type:0,
   wall:1.2,cavity_h:3.2,stem_od:5.5,cross_len:4.15,cross_w:1.35,cross_depth:3.0,chamfer:0.3,homing:false,
-  homing_type:0,homing_len:4.9,homing_w:0.9,homing_h:0.25,homing_y:-4,homing_x:0,quality:1};
+  homing_type:0,homing_len:4.9,homing_w:0.9,homing_h:0.25,homing_y:-4,homing_x:0,homing_mode:0,homing_depth:0.5,homing_hole_d:1.9,homing_hole_depth:1.5,homing_ins:0,homing_pin_clr:0.1,quality:1};
 let P={...DEF};
 
 const GROUPS=[
@@ -43,12 +43,22 @@ const GROUPS=[
     {k:"chamfer",label:"入口の面取り",hint:"エレファントフット対策",min:0,max:0.6,step:0.05},
     {k:"stem_od",label:"ステム外径",min:4.8,max:6.5,step:0.05}]},
   {title:"ホーミング突起",open:false,items:[
-    {check:"homing",label:"ホームポジション用の突起を付ける"},
-    {note:"キーマップを読み込んでいるときは、突起を付けるキーをキーの設定欄で選べます（最初はF・Jキーに付きます）。形と位置はここの設定を全キー共通で使います。"},
+    {check:"homing",label:"ホームポジションの目印（ホーミング）を付ける"},
+    {note:"キーマップを読み込んでいるときは、ホーミングを付けるキーをキーの設定欄で選べます（最初はF・Jキーに付きます）。形と位置はここの設定を全キー共通で使います。"},
+    {seg:"homing_mode",label:"方式",options:[["突起",0],["凹み",1],["差し込み穴",2]],dep:()=>P.homing},
+    {note:()=>+P.homing_mode===1?"天面を彫り込んだ溝・くぼみです。天面を下にして印刷してもサポートが要りません。指で分かるよう、幅は1mm以上・深さ0.4〜0.6mmくらいが目安です（1層目のはみ出しで細い溝は埋まりやすくなります）。":
+      +P.homing_mode===2?(+P.homing_ins===1?"天面まで貫通した穴（バーなら細長い穴）と、裏側（キーの内側の天井）に座ぐりを開けます。差し込む部品は下につばが付いた形で、キーキャップの内側から差し込むと、つばが座ぐりに当たって出っ張りの高さが決まり、上には抜けません。押される向きには接着で固定してください。天面を下にして印刷できます。":
+        "天面に穴（バーなら細長い溝）だけを開けておき、印刷後に部品を上から差して接着します（天面を下にして印刷できます）。ドットなら1.75mmフィラメントの切れ端を差し、出っ張りを切りそろえて先を丸めるのも手軽です。")+" 差し込む部品（穴よりすき間の分だけ細く、頭が丸い）も一緒に出力します。":
+      "天面から出っ張る突起です。天面を上にして印刷するときに使います。",dep:()=>P.homing},
+    {seg:"homing_ins",label:"差し込む向き",options:[["上から（止まり穴）",0],["下から（貫通・つば付き）",1]],dep:()=>P.homing&&+P.homing_mode===2},
     {seg:"homing_type",label:"形",options:[["バー",0],["ドット",1]],dep:()=>P.homing},
     {k:"homing_len",label:"長さ",hint:"端から端まで",min:1,max:12,step:0.1,dep:()=>P.homing&&P.homing_type==0},
-    {k:"homing_w",label:"太さ",hint:"バーの幅。ドットは直径",min:0.3,max:3,step:0.05,dep:()=>P.homing},
-    {k:"homing_h",label:"高さ",hint:"天面からの出っ張り",min:0.1,max:1.2,step:0.05,dep:()=>P.homing},
+    {k:"homing_w",label:"太さ",hint:"バー・溝の幅。ドットは直径",min:0.3,max:3,step:0.05,dep:()=>P.homing&&+P.homing_mode!==2},
+    {k:"homing_depth",label:"凹みの深さ",hint:"天面からの深さ",min:0.2,max:1.2,step:0.05,dep:()=>P.homing&&+P.homing_mode===1},
+    {k:"homing_hole_d",label:"穴の幅",hint:"ドットは直径。1.75mmフィラメントを差すなら1.85〜1.95",min:1,max:3,step:0.05,dep:()=>P.homing&&+P.homing_mode===2},
+    {k:"homing_hole_depth",label:"穴の深さ",hint:"天面からの深さ",min:0.6,max:3,step:0.1,dep:()=>P.homing&&+P.homing_mode===2&&+P.homing_ins!==1},
+    {k:"homing_pin_clr",label:"部品のすき間",hint:"片側。差し込む部品を穴より細くする量",min:0,max:0.3,step:0.01,dep:()=>P.homing&&+P.homing_mode===2},
+    {k:"homing_h",label:"高さ",hint:"天面からの出っ張り（差し込み穴ではピンの出っ張り）",min:0.1,max:1.2,step:0.05,dep:()=>P.homing&&+P.homing_mode!==1},
     {k:"homing_y",label:"上下の位置",hint:"天面の中心から。マイナスで手前（下側）",min:-7,max:7,step:0.1,dep:()=>P.homing},
     {k:"homing_x",label:"左右の位置",hint:"天面の中心から。マイナスで左",min:-7,max:7,step:0.1,dep:()=>P.homing}]},
   {title:"オプション",open:false,items:[
@@ -63,7 +73,9 @@ function mkReset(k,apply){const b=document.createElement("button");b.type="butto
   b.title="初期値（"+defText(k)+"）に戻す";b.setAttribute("aria-label",b.title);
   b.onclick=()=>{apply(DEF[k]);edited(k);update();};resets[k]=b;return b;}
 // a homing setting was changed by the user (keymap mode shows a key that has the bump)
-function edited(k){if(/^homing/.test(k)&&typeof homingEdited==="function")homingEdited(k);}
+function edited(k){
+  if(k==="homing_mode"&&+P.homing_mode===1&&P.homing_w<1)setVal("homing_w",1.2);
+  if(/^homing/.test(k)&&typeof homingEdited==="function")homingEdited(k);}
 function refreshResets(){for(const k in resets)resets[k].disabled=(P[k]===DEF[k]);}
 const inputs={};
 function buildForm(){
@@ -91,7 +103,8 @@ function buildForm(){
         lab.appendChild(c);lab.appendChild(document.createTextNode(it.label));l.appendChild(lab);
         l.appendChild(mkReset(it.check,v=>{P[it.check]=v;c.checked=v;}));d.appendChild(l);inputs[it.check]={check:c};
       }else if(it.note){
-        const h=document.createElement("p");h.className="hint";h.style.padding="0 0 10px";h.textContent=it.note;d.appendChild(h);
+        const h=document.createElement("p");h.className="hint";h.style.padding="0 0 10px";h.textContent=typeof it.note==="function"?it.note():it.note;d.appendChild(h);
+        if(it.dep||typeof it.note==="function")inputs["_note"+Object.keys(inputs).length]={row:h,it,note:true};
       }else if(it.preset){
         const w=document.createElement("div");w.className="seg";
         const lab=document.createElement("div");lab.style.cssText="width:100%;font-size:14px";lab.textContent="十字穴のプリセット";w.appendChild(lab);
@@ -119,7 +132,8 @@ function buildForm(){
   refreshDeps();
 }
 function setVal(k,v){P[k]=v;const i=inputs[k];if(i&&i.num){i.num.value=fmt(v);i.rng.value=v;}}
-function refreshDeps(){for(const k in inputs){const i=inputs[k];const el=i.row||i.seg;if(el&&i.it&&i.it.dep){el.style.display=i.it.dep()?"":"none";}}}
+function refreshDeps(){for(const k in inputs){const i=inputs[k];const el=i.row||i.seg;if(el&&i.it&&i.it.dep){el.style.display=i.it.dep()?"":"none";}
+  if(i.note&&typeof i.it.note==="function")i.row.textContent=i.it.note();}}
 
 // ---------- validation ----------
 function sdRR(x,y,s,r){const h=s/2-r,qx=Math.abs(x)-h,qy=Math.abs(y)-h;return Math.hypot(Math.max(qx,0),Math.max(qy,0))+Math.min(Math.max(qx,qy),0)-r;}
@@ -149,7 +163,18 @@ function analyze(){
   const cr=Math.hypot(P.cross_len/2,P.cross_w/2);
   if(cr>P.stem_od/2-0.4)warns.push("十字穴に対してステム外径が細く、肉が薄くなっています。");
   if(itop<P.stem_od+1)warns.push("内側空洞がステムに対して狭くなっています。側壁を薄くしてください。");
-  if(P.homing){const w=homingWarn(P,D);if(w)warns.push(w);}
+  if(P.homing){const w=homingWarn(P,D);if(w)warns.push(w);
+    const S=homingSpec(P);
+    if(S.mode===2&&S.ins===1){const why=homingThruCheck(P,D);if(why)errs.push("ホーミングを下から差し込む穴を開けられません（"+why+"）。位置や大きさを変えるか、「上から」にしてください。");}
+    else if(S.mode){ // the recess / hole must leave material above the cavity and stay clear of the cross hole
+      const L=Math.max(0,S.len-S.w),pts=[];for(let i=0;i<16;i++){const a=i/16*2*Math.PI;for(const ex of L>0?[-L/2,L/2]:[0])for(const f of [0.5,1])pts.push([S.x+ex+S.r*f*Math.cos(a),S.y+S.r*f*Math.sin(a)]);}
+      pts.push([S.x,S.y]);let left=Infinity;for(const [x,y] of pts){const d=-sdRR(x,y,P.top_size,P.r_top);left=Math.min(left,ztop(x,y,Math.max(d,0),d<P.edge_band,P,D)-S.depth-P.cavity_h);}
+      const nm=S.mode===1?"凹み":"差し込み穴";
+      if(left<0.3)errs.push("ホーミングの"+nm+"が深すぎて、天面の裏（内側の空洞）まで届いてしまいます。深さを"+fmt(Math.max(0.1,Math.floor((S.depth+left-0.6)*20)/20))+"mm以下にしてください。");
+      else if(left<0.6)warns.push("ホーミングの"+nm+"の下に残る肉が"+fmt(Math.round(left*100)/100)+"mmしかありません。深さを浅くすると割れにくくなります。");
+      const cx=P.cross_len/2+P.chamfer+0.4,cw=P.cross_w/2+P.chamfer+0.4,inX=(x,y)=>(Math.abs(x)<cx&&Math.abs(y)<cw)||(Math.abs(x)<cw&&Math.abs(y)<cx);
+      if(P.cross_depth>P.cavity_h&&pts.some(([x,y])=>inX(x,y))&&S.depth+P.cross_depth>(P.edge_h+D.E+D.dome)-0.4)errs.push("ホーミングの"+nm+"が十字穴の真上にあり、つながってしまいます。位置をずらしてください。");
+    }}
   return {errs,warns,thin,center:P.edge_h+D.E+D.dome,base:D.base};
 }
 
@@ -157,9 +182,16 @@ function analyze(){
 const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
 let W=0,H=0,view="iso",tris=[],dirty=true;
 let yaw=-0.6,el=0.55,ty=-0.6,te=0.55,span=24,ts=24;
-const VIEWS={iso:[-0.6,0.55,24],side:[0,0.04,24],bottom:[0,-1.4,24],row:[0,0.45,58],section:[0,0,24],all:[0,0.95,240],sizes:[-0.25,0.9,60]};
-const WIDE=v=>v==="all"||v==="sizes"; // views of many keys: zoomable, computed span
-function viewSpan(v){return v==="all"?wholeSpan():v==="sizes"?sizesSpan():(VIEWS[v]||VIEWS.iso)[2];}
+// the point the camera looks at (world mm): moved by right-drag (or middle-drag / Shift+drag); the views reset it
+let pan=[0,0,0];
+function panBy(dx,dy){ // screen pixels -> along the camera's right and up directions
+  const k=Math.min(W,H*1.25)/span,cy=Math.cos(yaw),sy=Math.sin(yaw),ce=Math.cos(el),se=Math.sin(el),lim=Math.max(span,30);
+  const r=[cy,-sy,0],u=[sy*se,cy*se,ce];
+  for(let i=0;i<3;i++)pan[i]=Math.max(-lim,Math.min(lim,pan[i]-r[i]*dx/k+u[i]*dy/k));dirty=true;}
+function panReset(){if(pan.some(v=>v!==0)){pan=[0,0,0];dirty=true;}}
+const VIEWS={iso:[-0.6,0.55,24],side:[0,0.04,24],bottom:[0,-1.4,24],row:[0,0.45,58],section:[0,0,24],all:[0,0.95,240],sizes:[-0.25,0.9,60],tray:[-0.35,0.8,260]};
+const WIDE=v=>v==="all"||v==="sizes"||v==="tray"; // views of many keys: zoomable, computed span
+function viewSpan(v){return v==="all"?wholeSpan():v==="sizes"?sizesSpan():v==="tray"?traySpan():(VIEWS[v]||VIEWS.iso)[2];}
 const vw=document.getElementById("vw"),glc=document.getElementById("gl");
 function resize(){W=vw.clientWidth||360;H=vw.clientHeight||340;const d=window.devicePixelRatio||1;cv.width=W*d;cv.height=H*d;ctx.setTransform(d,0,0,d,0,0);
   glc.width=Math.round(W*d);glc.height=Math.round(H*d);dirty=true;}
@@ -167,9 +199,9 @@ function resize(){W=vw.clientWidth||360;H=vw.clientHeight||340;const d=window.de
 let GLR=(()=>{
   let gl=null;try{gl=glc.getContext("webgl",{antialias:true,alpha:true,premultipliedAlpha:true});}catch(_){}
   if(!gl)return null;
-  const vs=`attribute vec3 p;attribute vec3 n;attribute vec3 c;uniform vec4 rot;uniform vec4 prm;varying vec3 vn;varying vec3 vc;
-  void main(){float cy=rot.x,sy=rot.y,ce=rot.z,se=rot.w;
-    vec3 q=vec3(p.x*cy-p.y*sy,p.x*sy+p.y*cy,p.z-prm.w);vec3 v=vec3(q.x,q.y*se+q.z*ce,q.y*ce-q.z*se);
+  const vs=`attribute vec3 p;attribute vec3 n;attribute vec3 c;uniform vec4 rot;uniform vec4 prm;uniform vec3 tg;varying vec3 vn;varying vec3 vc;
+  void main(){float cy=rot.x,sy=rot.y,ce=rot.z,se=rot.w;vec3 a=p-tg;
+    vec3 q=vec3(a.x*cy-a.y*sy,a.x*sy+a.y*cy,a.z);vec3 v=vec3(q.x,q.y*se+q.z*ce,q.y*ce-q.z*se);
     vec3 m=vec3(n.x*cy-n.y*sy,n.x*sy+n.y*cy,n.z);vn=vec3(m.x,m.y*se+m.z*ce,m.y*ce-m.z*se);vc=c;
     float D=prm.z;float w=D+v.z;gl_Position=vec4(v.x*prm.x*D,v.y*prm.y*D,v.z/80.0*w,w);}`;
   const fs=`precision mediump float;varying vec3 vn;varying vec3 vc;uniform vec3 L;
@@ -178,7 +210,7 @@ let GLR=(()=>{
   const sh=(type,src)=>{const o=gl.createShader(type);gl.shaderSource(o,src);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;};
   let prog;try{prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);
     if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error("link");}catch(e){console.warn(e);return null;}
-  const loc={p:gl.getAttribLocation(prog,"p"),n:gl.getAttribLocation(prog,"n"),c:gl.getAttribLocation(prog,"c"),rot:gl.getUniformLocation(prog,"rot"),prm:gl.getUniformLocation(prog,"prm"),L:gl.getUniformLocation(prog,"L")};
+  const loc={p:gl.getAttribLocation(prog,"p"),n:gl.getAttribLocation(prog,"n"),c:gl.getAttribLocation(prog,"c"),rot:gl.getUniformLocation(prog,"rot"),prm:gl.getUniformLocation(prog,"prm"),tg:gl.getUniformLocation(prog,"tg"),L:gl.getUniformLocation(prog,"L")};
   const buf={p:gl.createBuffer(),n:gl.createBuffer(),c:gl.createBuffer()};let count=0,ref=null;
   function upload(T){
     const nf=T.length,pos=new Float32Array(nf*9),nor=new Float32Array(nf*9),col=new Float32Array(nf*9);
@@ -211,7 +243,7 @@ let GLR=(()=>{
     gl.enable(gl.DEPTH_TEST);gl.useProgram(prog);
     const k=Math.min(W,H*1.25)/span,Dd=140*Math.max(1,span/30);
     gl.uniform4f(loc.rot,Math.cos(yaw),Math.sin(yaw),Math.cos(el),Math.sin(el));
-    gl.uniform4f(loc.prm,k/(W/2),k/(H/2),Dd,2.4);gl.uniform3f(loc.L,L[0],L[1],L[2]);
+    gl.uniform4f(loc.prm,k/(W/2),k/(H/2),Dd,2.4);gl.uniform3f(loc.tg,pan[0],pan[1],2.4+pan[2]);gl.uniform3f(loc.L,L[0],L[1],L[2]);
     for(const [b,l] of [[buf.p,loc.p],[buf.n,loc.n],[buf.c,loc.c]]){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,3,gl.FLOAT,false,0,0);}
     gl.drawArrays(gl.TRIANGLES,0,count);
   }
@@ -224,7 +256,9 @@ function rebuildPreview(){
   if(view!=="all"&&typeof wholeTok!=="undefined"){wholeTok++;clearTimeout(wholeTimer);}
   if(view!=="sizes"&&typeof sampleReset==="function")sampleReset();
   if(view==="all"&&typeof KM!=="undefined"&&KM.keys.length){scheduleWhole();return;}
+  if(view!=="tray"&&typeof trayReset==="function")trayReset();
   if(view==="sizes"&&typeof scheduleSamples==="function"){scheduleSamples();return;}
+  if(view==="tray"&&typeof scheduleTray==="function"){scheduleTray();return;}
   wholeNote("");
   tris=[];const xs=view==="row"?[-P.pitch,0,P.pitch]:[0];
   xs.forEach(x=>{tris=tris.concat(buildMesh(P,8,48,x));});dirty=true;
@@ -254,7 +288,7 @@ function render3D(){
   ctx.clearRect(0,0,W,H);
   const cy=Math.cos(yaw),sy=Math.sin(yaw),ce=Math.cos(el),se=Math.sin(el),zc=2.4,Dd=140*Math.max(1,span/30),k=Math.min(W,H*1.25)/span,out=[];
   for(const t of tris){
-    const v=[t[0],t[1],t[2]].map(p=>{const x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z1=p[2]-zc;return[x1,y1*se+z1*ce,y1*ce-z1*se];});
+    const v=[t[0],t[1],t[2]].map(q=>{const p=[q[0]-pan[0],q[1]-pan[1],q[2]-pan[2]],x1=p[0]*cy-p[1]*sy,y1=p[0]*sy+p[1]*cy,z1=p[2]-zc;return[x1,y1*se+z1*ce,y1*ce-z1*se];});
     const u=[v[1][0]-v[0][0],v[1][1]-v[0][1],v[1][2]-v[0][2]],w=[v[2][0]-v[0][0],v[2][1]-v[0][1],v[2][2]-v[0][2]];
     const n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],nl=Math.hypot(...n);if(nl<1e-12)continue;
     const it=0.36+0.64*Math.abs((n[0]*L[0]+n[1]*L[1]+n[2]*L[2])/nl);
@@ -304,15 +338,21 @@ function loop(){
 }
 document.querySelectorAll(".views:not(.lib-tabs) button").forEach(b=>b.addEventListener("click",()=>{
   const prev=view;view=b.dataset.view;document.querySelectorAll(".views:not(.lib-tabs) button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
-  const v=VIEWS[view];ty=v[0];te=v[1];ts=viewSpan(view);
+  const v=VIEWS[view];ty=v[0];te=v[1];ts=viewSpan(view);panReset();
   if(prev==="row"||view==="row"||WIDE(prev)||WIDE(view)){tris=WIDE(view)?[]:tris;rebuildPreview();}dirty=true;}));
 // wheel zoom (whole-keyboard view)
 cv.addEventListener("wheel",e=>{const sh=typeof shareViewerOn!=="undefined"&&shareViewerOn;if(!WIDE(view)&&!sh)return;e.preventDefault();
   ts=Math.min(WIDE(view)?viewSpan(view)*2:120,Math.max(WIDE(view)?20:8,ts*Math.pow(1.0015,e.deltaY)));},{passive:false}); // whole view, and the viewer in the post dialog
+// left-drag turns the camera; right-drag (also middle-drag or Shift+drag) moves it; double-click centres it again
 let drag=null;
-cv.addEventListener("pointerdown",e=>{if(view==="section")return;drag=[e.clientX,e.clientY];try{cv.setPointerCapture(e.pointerId);}catch(_){}});
-cv.addEventListener("pointermove",e=>{if(!drag)return;ty+=(e.clientX-drag[0])*0.01;te=Math.max(-1.5,Math.min(1.5,te+(e.clientY-drag[1])*0.01));drag=[e.clientX,e.clientY];});
+cv.addEventListener("pointerdown",e=>{if(view==="section")return;const move=e.button===2||e.button===1||(e.button===0&&e.shiftKey);
+  if(e.button===1)e.preventDefault();drag={x:e.clientX,y:e.clientY,move};try{cv.setPointerCapture(e.pointerId);}catch(_){}});
+cv.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+  if(drag.move)panBy(dx,dy);else{ty+=dx*0.01;te=Math.max(-1.5,Math.min(1.5,te+dy*0.01));}});
 ["pointerup","pointercancel"].forEach(n=>cv.addEventListener(n,()=>drag=null));
+cv.addEventListener("contextmenu",e=>{if(view!=="section")e.preventDefault();}); // the right button drags instead
+cv.addEventListener("auxclick",e=>{if(e.button===1)e.preventDefault();});
+cv.addEventListener("dblclick",()=>panReset());
 window.addEventListener("resize",resize);
 
 // ---------- floating preview while adjusting (mobile) ----------
@@ -364,6 +404,7 @@ function update(){
   if(A.errs.length===0)rebuildPreview();
   refreshResets();
   updateSaveState();
+  if(typeof saveDraft==="function")saveDraft();
 }
 
 
@@ -539,6 +580,13 @@ chamfer     = ${n(P.chamfer)};
 
 homing      = ${P.homing?"true":"false"};
 homing_type = ${P.homing_type};   // 0:バー / 1:ドット
+homing_mode = ${+P.homing_mode||0};   // 0:突起 / 1:凹み / 2:差し込み穴
+homing_depth      = ${n(P.homing_depth??0.5)};   // 凹みの深さ
+homing_hole_d     = ${n(P.homing_hole_d??1.9)};   // 差し込み穴の径
+homing_hole_depth = ${n(P.homing_hole_depth??1.5)};   // 差し込み穴の深さ（上から差す場合）
+homing_ins        = ${+P.homing_ins===1?1:0};   // 差し込む向き 0:上から（止まり穴） / 1:下から（貫通・つば付き）
+homing_pin_clr    = ${n(P.homing_pin_clr??0.1)};   // 差し込む部品のすき間（片側）
+homing_fl_c       = [${(()=>{const c=homingFlangeAt(P,homingSpec(P));return n(Math.round(c[0]*1000)/1000)+", "+n(Math.round(c[1]*1000)/1000);})()}];   // 座ぐり（つば）の中心
 homing_len  = ${n(P.homing_len)};
 homing_w    = ${n(P.homing_w)};
 homing_h    = ${n(P.homing_h)};
@@ -557,7 +605,9 @@ document.getElementById("save").addEventListener("click",async()=>{
     const q=P.quality==2?[24,160]:[14,96];
     const stl=toSTL(buildMesh(P,q[0],q[1],0));
     const tag=fmt(P.pitch).replace(".","_")+"mm";
-    const zip=makeZip([{name:"lak_keycap_"+tag+".stl",data:stl},{name:"lak_keycap_"+tag+".scad",data:new TextEncoder().encode(scadText())}]);
+    const files=[{name:"lak_keycap_"+tag+".stl",data:stl},{name:"lak_keycap_"+tag+".scad",data:new TextEncoder().encode(scadText())}];
+    if(P.homing&&homingSpec(P).mode===2)files.push({name:"homing_pin.stl",data:toSTL(homingPins(P,2))});
+    const zip=makeZip(files);
     const fname="lak_keycap_"+tag+".zip";
     await rawSave(zip,fname);
     st.textContent="保存しました。ZIPを展開するとSTLが入っています。";
